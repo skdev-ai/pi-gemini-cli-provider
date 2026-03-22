@@ -7,3 +7,25 @@ coverage/
 .gsd/
 .gsd
 RESEARCH-*.md
+
+# ── GSD baseline (auto-generated) ──
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+.env
+.env.*
+!.env.example
+.next/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+target/
+vendor/
+tmp/

@@ -12,6 +12,42 @@
 
 import { writeToolSchemas } from './tool-schema-writer.js';
 
+// Export A2A client for use in provider implementation
+export { sendMessageStream, injectResult } from './a2a-client.js';
+export type {
+  SendMessageStreamParams,
+  SendMessageStreamResult,
+  InjectResultParams,
+  InjectResultResult,
+} from './a2a-client.js';
+
+// Export SSE parser for stream processing
+export { parseSSEStream, parseA2AResult, extractTextContent, extractToolCall, isAwaitingApproval } from './sse-parser.js';
+export type { ParsedA2AEvent } from './types.js';
+
+// Export task manager for state tracking
+export {
+  createTask,
+  createTaskWithIds,
+  updateTaskState,
+  getTaskState,
+  getPendingToolCalls,
+  clearPendingToolCalls,
+  isAwaitingApproval as taskIsAwaitingApproval,
+  isTaskTerminal,
+  markTaskFailed,
+  deleteTask,
+  clearAllTasks,
+  hasTask,
+} from './task-manager.js';
+export type { TaskState, ToolCallMetadata } from './types.js';
+
+// Export A2A lifecycle for server management
+export { startServer, stopServer, getServerState } from './a2a-lifecycle.js';
+
+// Export inject_result patch verification
+export { checkInjectResultPatched, applyInjectResultPatch } from './inject-result-patch.js';
+
 interface ExtensionAPI {
   getAllTools(): any[];
   on(event: string, handler: Function): void;

@@ -48,6 +48,69 @@ export { startServer, stopServer, getServerState } from './a2a-lifecycle.js';
 // Export inject_result patch verification
 export { checkInjectResultPatched, applyInjectResultPatch } from './inject-result-patch.js';
 
+// Export S04 approval flow primitives
+export {
+  classifyToolRouting,
+  isNativeTool,
+  isMcpTool,
+  stripMcpPrefix,
+  addMcpPrefix,
+  buildReinjectionWorkList,
+  filterWorkItemsByRouting,
+  getMcpWorkItems,
+  getNativeWorkItems,
+  determineStopReason,
+  hasApprovalRequired,
+  allAutoApproved,
+  validateReinjectionCompleteness,
+  validateToolResultPayload,
+} from './approval-flow.js';
+export type {
+  ToolRoutingDecision,
+  ReinjectionWorkItem,
+  ToolResultPayload,
+  NativeToolName,
+} from './types.js';
+
+// Export S04 result extractor primitives
+export {
+  detectReCall,
+  extractToolResultMessages,
+  normalizeToolResult,
+  extractAllToolResults,
+  groupResultsByCallId,
+  hasResultForCallId,
+  getResultForCallId,
+} from './result-extractor.js';
+export type {
+  ExtractedToolResult,
+  PiToolResultMessage,
+} from './types.js';
+
+// Export S04 event bridge primitives
+export {
+  createPartialMessage,
+  updatePartialMessage,
+  accumulateEvents,
+  convertToolCallToPi,
+  convertToolCallsToPi,
+  translateTextEvent,
+  translateThoughtEvent,
+  translateToolCallEvent,
+  translateEvent,
+  translateEvents,
+  extractCompleteMessage,
+  hasContent,
+  hasToolCalls,
+  validateA2AEvent,
+  validatePartialMessage,
+} from './event-bridge.js';
+export type {
+  PiAssistantMessageEvent,
+  PiToolCallContent,
+  PartialAssistantMessage,
+} from './types.js';
+
 interface ExtensionAPI {
   getAllTools(): any[];
   on(event: string, handler: Function): void;

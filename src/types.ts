@@ -407,3 +407,142 @@ export interface A2ATransportError {
   /** Optional underlying error for debugging */
   cause?: unknown;
 }
+
+// ============================================================================
+// S04 Approval Flow Types
+// ============================================================================
+
+/**
+ * Native tool allowlist for auto-approval.
+ * These tools bypass MCP routing and are auto-approved.
+ */
+export const NATIVE_TOOL_ALLOWLIST = ['google_web_search', 'web_fetch'] as const;
+
+/**
+ * Native tool name type (for type-safe routing).
+ */
+export type NativeToolName = (typeof NATIVE_TOOL_ALLOWLIST)[number];
+
+/**
+ * Tool routing decision for a pending tool call.
+ * Classifies whether a tool call should be routed to MCP or auto-approved as native.
+ */
+export interface ToolRoutingDecision {
+  /** Original tool call metadata */
+  toolCall: ToolCallMetadata;
+  /** Routing classification */
+  routing: 'mcp' | 'native';
+  /** User-facing tool name (prefix-stripped for MCP tools) */
+  displayName: string;
+  /** Whether this tool is auto-approved (native) or requires approval (MCP) */
+  autoApprove: boolean;
+  /** Reason for routing decision */
+  reason: string;
+}
+
+/**
+ * Reinjection work item for a completed tool call.
+ * Represents one inject_result() call to be made.
+ */
+export interface ReinjectionWorkItem {
+  /** Tool call ID for this result */
+  callId: string;
+  /** Tool name (user-facing, prefix-stripped) */
+  toolName: string;
+  /** Tool arguments */
+  args: unknown;
+  /** Tool result payload for injection */
+  result: ToolResultPayload;
+  /** Whether this was auto-approved (native) or required approval (MCP) */
+  routing: 'mcp' | 'native';
+}
+
+/**
+ * Tool result payload normalized for inject_result().
+ * Compatible with pi's ToolResultMessage.response shape.
+ */
+export interface ToolResultPayload {
+  /** Response name (matches tool name) */
+  name: string;
+  /** Response content (structured data) */
+  response: unknown;
+}
+
+// ============================================================================
+// S04 Result Extractor Types
+// ============================================================================
+
+/**
+ * Normalized tool result extracted from pi's ToolResultMessage.
+ * Ready for injection via inject_result().
+ */
+export interface ExtractedToolResult {
+  /** Tool call ID this result corresponds to */
+  toolCallId: string;
+  /** Tool name */
+  toolName: string;
+  /** Result payload for injection */
+  payload: ToolResultPayload;
+}
+
+/**
+ * pi ToolResultMessage shape (from pi's Context.messages).
+ * Used for re-call detection and result extraction.
+ */
+export interface PiToolResultMessage {
+  /** Always 'toolResult' for tool result messages */
+  role: 'toolResult';
+  /** Tool call ID this result is for */
+  toolCallId: string;
+  /** Tool name */
+  name: string;
+  /** Result content */
+  content: Array<{
+    /** Content type */
+    type: 'text' | 'image';
+    /** Text content (if type === 'text') */
+    text?: string;
+    /** Image data (if type === 'image') */
+    image?: string;
+  }>;
+}
+
+// ============================================================================
+// S04 Event Bridge Types
+// ============================================================================
+
+/**
+ * pi AssistantMessageEvent shape for stream emission.
+ * Compatible with pi's AssistantMessageEventStream contract.
+ */
+export interface PiAssistantMessageEvent {
+  /** Event type discriminator */
+  type: 'text' | 'thinking' | 'toolCall';
+  /** Event content (varies by type) */
+  content: string | PiToolCallContent;
+}
+
+/**
+ * pi tool call content for AssistantMessageEvent.
+ */
+export interface PiToolCallContent {
+  /** Tool call ID */
+  callId: string;
+  /** Tool name (user-facing) */
+  name: string;
+  /** Tool arguments */
+  args: unknown;
+}
+
+/**
+ * Partial assistant message accumulator.
+ * Builds up the complete assistant message from A2A stream events.
+ */
+export interface PartialAssistantMessage {
+  /** Accumulated text content */
+  text: string;
+  /** Accumulated thinking content */
+  thinking: string;
+  /** Tool calls emitted so far */
+  toolCalls: PiToolCallContent[];
+}

@@ -4,16 +4,45 @@
  * Handles process spawning, stdout readiness detection, stderr auth error parsing,
  * exit event handling, ring buffer diagnostics, concurrent startup lock, and
  * search counter with forced restart at 1000 searches.
+ * 
+ * Supports provider-specific configuration:
+ * - Custom workspace path (default: ~/.pi/agent/extensions/pi-gemini-cli-provider/a2a-workspace)
+ * - Non-YOLO mode (GEMINI_YOLO_MODE not set by default)
+ * - Patch verification before reuse of existing servers
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import type { A2AServerState, SearchError } from './types.js';
 import { getA2APackageRoot } from './a2a-path.js';
 import { checkA2APatched, checkA2AInjectResultPatched } from './availability.js';
 import { isPortInUse, isServerHealthy } from './port-check.js';
 import { debugLog } from './logger.js';
+import { resolveWorkspacePath } from './workspace-generator.js';
+
+// ============================================================================
+// Configuration
+// ============================================================================
+
+/**
+ * A2A server startup configuration.
+ */
+export interface A2AStartupConfig {
+  /**
+   * Workspace path for A2A server.
+   * Default: ~/.pi/agent/extensions/pi-gemini-cli-provider/a2a-workspace
+   */
+  workspacePath?: string;
+  /**
+   * Whether to enable YOLO mode (GEMINI_YOLO_MODE=1).
+   * Default: false (non-YOLO mode for provider safety)
+   */
+  yoloMode?: boolean;
+  /**
+   * Port number for A2A server.
+   * Default: 41242
+   */
+  port?: number;
+}
 
 // ============================================================================
 // Constants
@@ -201,12 +230,20 @@ function startHealthMonitoring(): void {
  * - 5s timeout for readiness
  * - Exit event handling with code capture
  * - Ring buffer diagnostics (last 50 stdout/stderr lines)
+ * - Provider-specific workspace path and YOLO mode configuration
+ * - Reuse of existing servers with patch verification
  * 
+ * @param config - Optional startup configuration (workspace path, YOLO mode, port)
  * @returns Promise that resolves when server is running, rejects on error
  */
-export async function startServer(): Promise<void> {
+export async function startServer(config?: A2AStartupConfig): Promise<void> {
   // Clear manual stop flag (intentional start)
   manualStop = false;
+  
+  // Resolve configuration
+  const workspacePath = resolveWorkspacePath({ workspacePath: config?.workspacePath });
+  const yoloMode = config?.yoloMode ?? false;
+  const port = config?.port ?? A2A_PORT;
   
   // Check if there's an ongoing startup promise (concurrent lock)
   if (startupPromise) {
@@ -221,12 +258,29 @@ export async function startServer(): Promise<void> {
   }
 
   // Fix 10: Check for existing A2A server before spawning
-  log(`Checking for existing A2A server on port ${A2A_PORT}...`);
+  log(`Checking for existing A2A server on port ${port}...`);
   
   // Health check first - authoritative test for A2A server
-  const healthy = await isServerHealthy(A2A_PORT);
+  const healthy = await isServerHealthy(port);
   if (healthy) {
     log('Port check result: Healthy A2A server detected, reusing existing server');
+    
+    // Verify required patches are present before reusing
+    const packageRoot = getA2APackageRoot();
+    if (packageRoot) {
+      const serverPath = packageRoot + '/dist/a2a-server.mjs';
+      const hasPatch2 = checkA2APatched(serverPath);
+      const hasPatch3 = checkA2AInjectResultPatched();
+      
+      if (!hasPatch2 || !hasPatch3) {
+        log(`Warning: Reusing server but patches missing (Patch2: ${hasPatch2}, Patch3: ${hasPatch3})`);
+        // Don't throw here - let the server run but log the warning
+        // The caller can decide whether to restart
+      } else {
+        log('Required patches (Patch 2 and Patch 3) verified on running server');
+      }
+    }
+    
     // Mark as running without spawning
     startTime = Date.now();
     updateState({ 
@@ -248,12 +302,12 @@ export async function startServer(): Promise<void> {
   }
   
   // Health check failed, but port might still be in use by foreign process
-  const portInUse = await isPortInUse(A2A_PORT);
+  const portInUse = await isPortInUse(port);
   log(`Port check result: Port ${portInUse ? 'IN USE' : 'available'}`);
   
   if (portInUse) {
-    log(`Port ${A2A_PORT} is in use but server is not healthy. User should kill the process manually.`);
-    throw createSearchError('A2A_PORT_CONFLICT', `Port ${A2A_PORT} is already in use by another process. Please kill the process using this port and retry.`);
+    log(`Port ${port} is in use but server is not healthy. User should kill the process manually.`);
+    throw createSearchError('A2A_PORT_CONFLICT', `Port ${port} is already in use by another process. Please kill the process using this port and retry.`);
   }
 
   // Create startup promise for concurrent lock
@@ -282,9 +336,9 @@ export async function startServer(): Promise<void> {
         env: {
           ...process.env,
           USE_CCPA: '1',
-          CODER_AGENT_PORT: String(A2A_PORT),
-          CODER_AGENT_WORKSPACE_PATH: join(homedir(), '.pi', 'agent', 'extensions', 'gemini-cli-search', 'a2a-workspace'),
-          GEMINI_YOLO_MODE: 'true',
+          CODER_AGENT_PORT: String(port),
+          CODER_AGENT_WORKSPACE_PATH: workspacePath,
+          ...(yoloMode ? { GEMINI_YOLO_MODE: 'true' } : {}),
         },
       });
 

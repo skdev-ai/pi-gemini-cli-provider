@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as http from 'node:http';
 import { getA2APath, getA2APackageRoot } from './a2a-path.js';
+import { checkInjectResultPatched } from './inject-result-patch.js';
 
 /**
  * Checks if the Gemini CLI binary is available in PATH.
@@ -50,7 +51,7 @@ export function checkCredentialFile(): boolean {
  * 
  * @returns Object with `available` boolean and optional `reason` string
  */
-export function checkAvailability(): { available: boolean; reason?: string; a2a?: { installed: boolean; patched: boolean } } {
+export function checkAvailability(): { available: boolean; reason?: string; a2a?: { installed: boolean; patched: boolean; injectResultPatched: boolean } } {
   // Check if gemini CLI is installed
   if (!checkCliBinary()) {
     return {
@@ -72,12 +73,14 @@ export function checkAvailability(): { available: boolean; reason?: string; a2a?
   const packageRoot = a2aInstalled ? getA2APackageRoot() : null;
   const a2aBundlePath = packageRoot ? join(packageRoot, 'dist', 'a2a-server.mjs') : null;
   const a2aPatched = a2aBundlePath ? checkA2APatched(a2aBundlePath) : false;
+  const injectResultPatched = a2aBundlePath ? checkInjectResultPatched(a2aBundlePath) : false;
 
   return { 
     available: true,
     a2a: {
       installed: a2aInstalled,
       patched: a2aPatched,
+      injectResultPatched,
     }
   };
 }
@@ -107,6 +110,23 @@ export function checkA2APatched(filePath: string): boolean {
     // File not found, permission denied, or other errors
     return false;
   }
+}
+
+/**
+ * Checks if the A2A server bundle has been patched with inject_result support.
+ * Wrapper around checkInjectResultPatched() that resolves the A2A package root
+ * and constructs the bundle path automatically.
+ * 
+ * @returns true if inject_result patch is present, false otherwise
+ */
+export function checkA2AInjectResultPatched(): boolean {
+  const packageRoot = getA2APackageRoot();
+  if (!packageRoot) {
+    return false;
+  }
+  
+  const bundlePath = join(packageRoot, 'dist', 'a2a-server.mjs');
+  return checkInjectResultPatched(bundlePath);
 }
 
 /**

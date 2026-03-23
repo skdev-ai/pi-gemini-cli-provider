@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import type { A2AServerState, SearchError } from './types.js';
 import { getA2APackageRoot } from './a2a-path.js';
-import { checkA2APatched } from './availability.js';
+import { checkA2APatched, checkA2AInjectResultPatched } from './availability.js';
 import { isPortInUse, isServerHealthy } from './port-check.js';
 import { debugLog } from './logger.js';
 
@@ -268,6 +268,10 @@ export async function startServer(): Promise<void> {
       
       if (!checkA2APatched(serverPath)) {
         throw createSearchError('A2A_NOT_PATCHED', `A2A patch not found at ${serverPath}`);
+      }
+      
+      if (!checkA2AInjectResultPatched()) {
+        throw createSearchError('A2A_INJECT_RESULT_NOT_PATCHED', 'inject_result patch not found in A2A bundle');
       }
 
       // Spawn the server process using node directly with the bundle path

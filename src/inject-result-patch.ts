@@ -41,7 +41,7 @@ export const INJECT_RESULT_CASE = `} else if (outcomeString === 'inject_result')
           },
         },
       ],
-      resultDisplay: functionResponse.response.output,
+      resultDisplay: functionResponse.response?.output || JSON.stringify(functionResponse.response) || '',
       error: undefined,
       errorType: undefined,
       contentLength: JSON.stringify(functionResponse.response).length,
@@ -50,6 +50,17 @@ export const INJECT_RESULT_CASE = `} else if (outcomeString === 'inject_result')
   
   this.completedToolCalls.push(completedToolCall);
   this._resolveToolCall(callId);
+  
+  // Cleanup pending state
+  if (this.pendingToolConfirmationDetails) {
+    this.pendingToolConfirmationDetails.delete(callId);
+  }
+  if (this.pendingCorrelationIds) {
+    this.pendingCorrelationIds.delete(callId);
+  }
+  if (this.toolsAlreadyConfirmed) {
+    this.toolsAlreadyConfirmed.add(callId);
+  }
   
   logger.info('[Task] Injected result for callId: ' + callId);
   return true;

@@ -184,6 +184,12 @@ describe('inject_result patch', () => {
         expect(content).toContain('completedToolCall');
         expect(content).toContain('this.completedToolCalls.push');
         expect(content).toContain('this._resolveToolCall');
+        // Verify cleanup code is present
+        expect(content).toContain('pendingToolConfirmationDetails.delete(callId)');
+        expect(content).toContain('pendingCorrelationIds.delete(callId)');
+        expect(content).toContain('toolsAlreadyConfirmed.add(callId)');
+        // Verify fallback for resultDisplay
+        expect(content).toContain('functionResponse.response?.output || JSON.stringify(functionResponse.response)');
       } finally {
         cleanupTestBundle(testBundle);
       }

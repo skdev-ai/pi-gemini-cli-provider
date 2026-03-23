@@ -66,7 +66,9 @@ export interface SearchError {
     /** Detected when ACP warm subprocess fails to boot within timeout - S01 */
     | 'ACP_BOOT_FAILED'
     /** Detected when server respawn after health check failure fails - Bugfix 260320-1 */
-    | 'A2A_RESPAWN_FAILED';
+    | 'A2A_RESPAWN_FAILED'
+    /** Detected when inject_result patch is missing from A2A bundle - S02 */
+    | 'A2A_INJECT_RESULT_NOT_PATCHED';
   /** Human-readable error message */
   message: string;
 }

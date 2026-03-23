@@ -3,9 +3,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeToolSchemas, areSchemasStale, readToolSchemas, getSchemaFilePath, DENYLIST } from './tool-schema-writer.js';
+import { writeToolSchemas, areSchemasStale, readToolSchemas, DENYLIST } from './tool-schema-writer.js';
 import { existsSync, readFileSync, unlinkSync, mkdirSync, rmSync } from 'fs';
-import { dirname } from 'path';
+import { join } from 'path';
+import { homedir } from 'os';
 import { Type } from '@sinclair/typebox';
 
 // Mock tool schemas for testing (representative of real GSD tools)
@@ -116,10 +117,14 @@ const mockTools = [
 ];
 
 describe('tool-schema-writer', () => {
-  const schemaFilePath = getSchemaFilePath();
-  const schemaDir = dirname(schemaFilePath);
+  const schemaDir = join(homedir(), '.pi', 'agent', 'extensions', 'pi-gemini-cli-provider');
+  const schemaFileName = `test-tool-schemas-writer-${process.pid}.json`;
+  const schemaFilePath = join(schemaDir, schemaFileName);
 
   beforeEach(() => {
+    // Set unique schema path for this test file to avoid race conditions
+    process.env.PI_GEMINI_SCHEMA_PATH = join(schemaDir, schemaFileName);
+    
     // Clean up before each test
     if (existsSync(schemaFilePath)) {
       unlinkSync(schemaFilePath);
@@ -135,6 +140,8 @@ describe('tool-schema-writer', () => {
     if (existsSync(schemaFilePath)) {
       unlinkSync(schemaFilePath);
     }
+    // Clean up env var
+    delete process.env.PI_GEMINI_SCHEMA_PATH;
   });
 
   describe('DENYLIST', () => {

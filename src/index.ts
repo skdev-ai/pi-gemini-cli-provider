@@ -26,7 +26,7 @@ interface SessionContext {
 export default function(pi: ExtensionAPI) {
   // Register session_start handler to write tool schemas before A2A server starts
   // Ordering matters per R015 - schemas must exist before MCP server tools/list handler runs
-  pi.on('session_start', (ctx: SessionContext) => {
+  pi.on('session_start', (_event: any, ctx: SessionContext) => {
     const result = writeToolSchemas(pi);
     
     // Only notify user if tool list actually changed

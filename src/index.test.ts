@@ -8,10 +8,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, unlinkSync, readFileSync } from 'fs';
 import { Type } from '@sinclair/typebox';
-import { getSchemaFilePath } from './tool-schema-writer.js';
+import { join } from 'path';
+import { homedir } from 'os';
 
-// Mock the tool-schema-writer module to capture calls
-import * as toolSchemaWriter from './tool-schema-writer.js';
+// Use unique schema path per test file to avoid race conditions
+const schemaDir = join(homedir(), '.pi', 'agent', 'extensions', 'pi-gemini-cli-provider');
+const schemaFileName = `test-index-${process.pid}.json`;
+const schemaFilePath = join(schemaDir, schemaFileName);
 
 // Mock pi object with getAllTools
 function createMockPi(tools: any[] = []) {
@@ -76,9 +79,10 @@ const sampleTools = [
 ];
 
 describe('session_start handler integration', () => {
-  const schemaFilePath = getSchemaFilePath();
-
   beforeEach(() => {
+    // Set unique schema path for this test file to avoid race conditions
+    process.env.PI_GEMINI_SCHEMA_PATH = schemaFilePath;
+    
     // Clean up schema file before each test
     if (existsSync(schemaFilePath)) {
       unlinkSync(schemaFilePath);
@@ -90,6 +94,8 @@ describe('session_start handler integration', () => {
     if (existsSync(schemaFilePath)) {
       unlinkSync(schemaFilePath);
     }
+    // Clean up env var
+    delete process.env.PI_GEMINI_SCHEMA_PATH;
   });
 
   it('writes schema file when session_start is triggered', async () => {
@@ -116,7 +122,7 @@ describe('session_start handler integration', () => {
     const mockCtx: any = createMockContext();
     
     // Trigger session_start
-    registeredHandlers['session_start'](mockCtx);
+    registeredHandlers['session_start']('session_start', mockCtx);
     
     // Verify schema file was created
     expect(existsSync(schemaFilePath)).toBe(true);
@@ -151,14 +157,14 @@ describe('session_start handler integration', () => {
     const mockCtx: any = createMockContext();
     
     // First trigger - should notify (file doesn't exist, isStale=true)
-    registeredHandlers['session_start'](mockCtx);
+    registeredHandlers['session_start']('session_start', mockCtx);
     expect(mockCtx.notifications.length).toBe(1);
     expect(mockCtx.notifications[0].message).toContain('Tool list updated');
     expect(mockCtx.notifications[0].level).toBe('info');
     
     // Second trigger with same tools - should NOT notify (isStale=false)
     mockCtx.notifications = []; // Clear notifications
-    registeredHandlers['session_start'](mockCtx);
+    registeredHandlers['session_start']('session_start', mockCtx);
     expect(mockCtx.notifications.length).toBe(0);
   });
 
@@ -175,7 +181,7 @@ describe('session_start handler integration', () => {
     
     extension(mockPi1);
     const mockCtx1: any = createMockContext();
-    registeredHandlers1['session_start'](mockCtx1);
+    registeredHandlers1['session_start']('session_start', mockCtx1);
     
     // Verify first session wrote schemas
     expect(existsSync(schemaFilePath)).toBe(true);
@@ -190,7 +196,7 @@ describe('session_start handler integration', () => {
     extension(mockPi2);
     
     const mockCtx2: any = createMockContext();
-    registeredHandlers2['session_start'](mockCtx2);
+    registeredHandlers2['session_start']('session_start', mockCtx2);
     expect(mockCtx2.notifications.length).toBe(0); // Same tools, no notification
     
     // Third session with different tools - should notify
@@ -202,7 +208,7 @@ describe('session_start handler integration', () => {
     extension(mockPi3);
     
     const mockCtx3: any = createMockContext();
-    registeredHandlers3['session_start'](mockCtx3);
+    registeredHandlers3['session_start']('session_start', mockCtx3);
     expect(mockCtx3.notifications.length).toBe(1); // Different tools, should notify
   });
 
@@ -218,7 +224,7 @@ describe('session_start handler integration', () => {
     
     extension(mockPi);
     const mockCtx: any = createMockContext();
-    registeredHandlers['session_start'](mockCtx);
+    registeredHandlers['session_start']('session_start', mockCtx);
     
     // Read and verify schema file
     const content = readFileSync(schemaFilePath, 'utf-8');

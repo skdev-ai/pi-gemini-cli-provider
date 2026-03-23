@@ -13,12 +13,14 @@
 import { writeToolSchemas } from './tool-schema-writer.js';
 
 // Export A2A client for use in provider implementation
-export { sendMessageStream, injectResult } from './a2a-client.js';
+export { sendMessageStream, injectResult, approveToolCall } from './a2a-client.js';
 export type {
   SendMessageStreamParams,
   SendMessageStreamResult,
   InjectResultParams,
   InjectResultResult,
+  ApproveToolCallParams,
+  ApproveToolCallResult,
 } from './a2a-client.js';
 
 // Export SSE parser for stream processing

@@ -96,6 +96,38 @@ export interface InjectResultResult {
   };
 }
 
+/**
+ * Parameters for approveToolCall operation.
+ * 
+ * Used to approve a tool call that is awaiting user approval.
+ * Sends an outcome (proceed_once, modify, cancel) to the A2A server.
+ */
+export interface ApproveToolCallParams {
+  /** Task ID containing the pending tool call */
+  taskId: string;
+  /** Tool call ID to approve */
+  callId: string;
+  /** Approval outcome */
+  outcome: 'proceed_once' | 'modify' | 'cancel';
+  /** Optional abort signal */
+  signal?: AbortSignal;
+}
+
+/**
+ * Result from approveToolCall operation.
+ */
+export interface ApproveToolCallResult {
+  /** Task ID */
+  taskId: string;
+  /** SSE response stream for parsing */
+  sseStream: ReadableStream<Uint8Array>;
+  /** Response metadata */
+  metadata: {
+    url: string;
+    requestId: string;
+  };
+}
+
 // ============================================================================
 // A2A Client Functions
 // ============================================================================
@@ -211,6 +243,90 @@ export async function injectResult(
       functionResponse: {
         name: toolName,
         response: functionResponse,
+      },
+    },
+  };
+
+  try {
+    const response = await fetchWithTimeouts(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify(requestBody),
+      signal,
+    });
+
+    if (!response.ok) {
+      throw createTransportError(
+        'HTTP_ERROR',
+        `A2A server responded with status ${response.status}`,
+        { url }
+      );
+    }
+
+    if (!response.body) {
+      throw createTransportError('PARSE_ERROR', 'A2A response has no body');
+    }
+
+    return {
+      taskId,
+      sseStream: response.body,
+      metadata: {
+        url,
+        requestId,
+      },
+    };
+  } catch (error) {
+    throw mapFetchErrorToTransportError(error, url);
+  }
+}
+
+/**
+ * Approves a tool call that is awaiting user approval.
+ * 
+ * Posts JSON-RPC request to root endpoint with:
+ * - method: "tasks/approve" in body
+ * - taskId, callId, and outcome in params
+ * 
+ * Used to approve native tool calls (google_web_search, web_fetch)
+ * by sending proceed_once outcome, allowing the A2A server to
+ * execute the tool and continue streaming.
+ * 
+ * @param params - Approval parameters
+ * @returns ApproveToolCallResult with SSE stream
+ * @throws A2ATransportError with typed failure mode
+ */
+export async function approveToolCall(
+  params: ApproveToolCallParams
+): Promise<ApproveToolCallResult> {
+  const { taskId, callId, outcome, signal } = params;
+  
+  const url = `http://localhost:${DEFAULT_A2A_PORT}/`;
+  const requestId = generateRequestId();
+
+  // Construct JSON-RPC request body for approve
+  // Note: Uses message/stream method with approval outcome in message parts
+  // This follows the A2A pattern for sending approval responses
+  const requestBody = {
+    id: requestId,
+    jsonrpc: '2.0' as const,
+    method: 'message/stream',
+    params: {
+      taskId,
+      message: {
+        role: 'user' as const,
+        parts: [
+          {
+            kind: 'data' as const,
+            data: {
+              callId,
+              outcome,
+            },
+          },
+        ],
+        messageId: requestId,
       },
     },
   };

@@ -13,7 +13,7 @@
  */
 
 import type { Context } from './pi-types.js';
-import { sendMessageStream, injectResult } from './a2a-client.js';
+import { sendMessageStream, injectResult, approveToolCall } from './a2a-client.js';
 import { parseSSEStream } from './sse-parser.js';
 import {
   createTask,
@@ -38,7 +38,6 @@ import {
   updatePartialMessage,
   translateEvents,
 } from './event-bridge.js';
-import type {} from './types.js';
 
 // ============================================================================
 // Pi Stream Type (local definition since 'pi' module not available at build time)
@@ -46,20 +45,35 @@ import type {} from './types.js';
 
 /**
  * Pi AssistantMessageEventStream interface.
- * Used for streaming assistant messages with text, thinking, and tool call events.
+ * Matches GSD's actual AssistantMessageEventStream contract.
+ * Uses push() with event objects instead of sendText/sendThinking/etc.
  */
 export interface AssistantMessageEventStream {
-  sendText(text: string): void;
-  sendThinking(thinking: string): void;
-  sendToolCall(callId: string, name: string, args: unknown): void;
+  /** Push an event to the stream */
+  push(event: AssistantMessageEvent): void;
+  /** Signal an error */
   error(err: Error): void;
+  /** Signal completion */
   complete(): void;
-  onText(listener: (text: string) => void): () => void;
-  onThinking(listener: (thinking: string) => void): () => void;
-  onToolCall(listener: (callId: string, name: string, args: unknown) => void): () => void;
-  onError(listener: (error: Error) => void): () => void;
-  onComplete(listener: () => void): () => void;
+  /** Register event listener (for testing) */
+  onEvent?(listener: (event: AssistantMessageEvent) => void): () => void;
+  /** Register error listener (for testing) */
+  onError?(listener: (error: Error) => void): () => void;
+  /** Register complete listener (for testing) */
+  onComplete?(listener: () => void): () => void;
 }
+
+/**
+ * Assistant message event types compatible with GSD's contract.
+ */
+export type AssistantMessageEvent =
+  | { type: 'text_delta'; delta: string; partial?: boolean }
+  | { type: 'thinking_delta'; delta: string; partial?: boolean }
+  | { type: 'tool_call'; callId: string; name: string; args: unknown }
+  | { type: 'tool_call_delta'; callId: string; nameDelta?: string; argsDelta?: unknown }
+  | { type: 'text'; content: string }
+  | { type: 'thinking'; content: string }
+  | { type: 'toolCall'; callId: string; name: string; args: unknown };
 
 // ============================================================================
 // Types
@@ -224,12 +238,12 @@ async function handleFreshPrompt(
     const piEvents = translateEvents([event]);
     for (const piEvent of piEvents) {
       if (piEvent.type === 'text' && piEvent.content) {
-        stream.sendText(piEvent.content as string);
+        stream.push({ type: "text_delta", delta: piEvent.content as string });
       } else if (piEvent.type === 'thinking' && piEvent.content) {
-        stream.sendThinking(piEvent.content as string);
+        stream.push({ type: "thinking_delta", delta: piEvent.content as string });
       } else if (piEvent.type === 'toolCall') {
         const toolCall = piEvent.content as any;
-        stream.sendToolCall(toolCall.callId, toolCall.name, toolCall.args);
+        stream.push({ type: "tool_call", callId: toolCall.callId, name: toolCall.name, args: toolCall.args });
       }
     }
     
@@ -252,10 +266,55 @@ async function handleFreshPrompt(
         }
         
         if (hasNativeCalls && !hasMcpCalls) {
-          // Only native calls - auto-approve and continue
-          // For S04, we'll return toolUse for all approvals to keep scope manageable
-          stopReason = 'toolUse';
-          break;
+          // Only native calls - auto-approve by sending proceed_once outcome
+          // This tells the A2A server to execute the native tool and continue
+          
+          // Approve all native tool calls
+          for (const toolCall of pendingToolCalls) {
+            try {
+              const { sseStream: approveStream } = await approveToolCall({
+                taskId: a2aTaskId,
+                callId: toolCall.callId,
+                outcome: 'proceed_once',
+                signal,
+              });
+              
+              // Consume the approval response stream
+              // This contains the model's continued output after tool execution
+              for await (const approveEvent of parseSSEStream(approveStream, { signal })) {
+                updateTaskState(a2aTaskId, approveEvent);
+                updatePartialMessage(partialMessage, approveEvent);
+                
+                const approvePiEvents = translateEvents([approveEvent]);
+                for (const piEvent of approvePiEvents) {
+                  if (piEvent.type === 'text' && piEvent.content) {
+                    stream.push({ type: "text_delta", delta: piEvent.content as string });
+                  } else if (piEvent.type === 'thinking' && piEvent.content) {
+                    stream.push({ type: "thinking_delta", delta: piEvent.content as string });
+                  } else if (piEvent.type === 'toolCall') {
+                    const toolCallEvent = piEvent.content as any;
+                    stream.push({ type: "tool_call", callId: toolCallEvent.callId, name: toolCallEvent.name, args: toolCallEvent.args });
+                  }
+                }
+                
+                // Check for terminal state or more approvals
+                const approvedState = getTaskState(a2aTaskId);
+                if (approvedState?.isTerminal) {
+                  break;
+                }
+              }
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : 'Auto-approval failed';
+              markTaskFailed(a2aTaskId, errorMessage);
+              throw new Error(`Failed to auto-approve native tool ${toolCall.callId}: ${errorMessage}`);
+            }
+          }
+          
+          // Clear the approved tool calls
+          clearPendingToolCalls(a2aTaskId, pendingToolCalls.map(tc => tc.callId));
+          
+          // Don't break - we've already consumed the resumed stream from approval
+          // Just continue to build final message
         }
       }
     }
@@ -356,12 +415,12 @@ async function handleReCall(
         const piEvents = translateEvents([event]);
         for (const piEvent of piEvents) {
           if (piEvent.type === 'text' && piEvent.content) {
-            stream.sendText(piEvent.content as string);
+            stream.push({ type: "text_delta", delta: piEvent.content as string });
           } else if (piEvent.type === 'thinking' && piEvent.content) {
-            stream.sendThinking(piEvent.content as string);
+            stream.push({ type: "thinking_delta", delta: piEvent.content as string });
           } else if (piEvent.type === 'toolCall') {
             const toolCall = piEvent.content as any;
-            stream.sendToolCall(toolCall.callId, toolCall.name, toolCall.args);
+            stream.push({ type: "tool_call", callId: toolCall.callId, name: toolCall.name, args: toolCall.args });
           }
         }
       }
@@ -378,7 +437,10 @@ async function handleReCall(
   clearPendingToolCalls(taskId, injectedCallIds);
   
   // Resume streaming the model's response
-  // The A2A server will continue from where it left off after receiving results
+  // NOTE: Sending empty prompt to trigger model continuation after inject_result.
+  // This may or may not be necessary - depends on whether A2A executor auto-continues
+  // after inject_result resolves pending tools. To be validated during S06 integration testing.
+  // See .gsd/KNOWLEDGE.md for details.
   const { sseStream } = await sendMessageStream({
     prompt: '', // Empty prompt - we're resuming existing task
     taskId,
@@ -399,12 +461,12 @@ async function handleReCall(
     const piEvents = translateEvents([event]);
     for (const piEvent of piEvents) {
       if (piEvent.type === 'text' && piEvent.content) {
-        stream.sendText(piEvent.content as string);
+        stream.push({ type: "text_delta", delta: piEvent.content as string });
       } else if (piEvent.type === 'thinking' && piEvent.content) {
-        stream.sendThinking(piEvent.content as string);
+        stream.push({ type: "thinking_delta", delta: piEvent.content as string });
       } else if (piEvent.type === 'toolCall') {
         const toolCall = piEvent.content as any;
-        stream.sendToolCall(toolCall.callId, toolCall.name, toolCall.args);
+        stream.push({ type: "tool_call", callId: toolCall.callId, name: toolCall.name, args: toolCall.args });
       }
     }
     
@@ -460,9 +522,7 @@ function createAssistantMessageEventStream(): AssistantMessageEventStream {
   // This is a mock implementation for S04
   // In real pi integration, this would use pi's actual stream API
   
-  const textListeners: ((text: string) => void)[] = [];
-  const thinkingListeners: ((thinking: string) => void)[] = [];
-  const toolCallListeners: ((callId: string, name: string, args: unknown) => void)[] = [];
+  const eventListeners: ((event: AssistantMessageEvent) => void)[] = [];
   const errorListeners: ((error: Error) => void)[] = [];
   const completeListeners: (() => void)[] = [];
   
@@ -470,19 +530,9 @@ function createAssistantMessageEventStream(): AssistantMessageEventStream {
   let errored = false;
   
   const stream: AssistantMessageEventStream = {
-    sendText(text: string) {
+    push(event: AssistantMessageEvent) {
       if (completed || errored) return;
-      textListeners.forEach(listener => listener(text));
-    },
-    
-    sendThinking(thinking: string) {
-      if (completed || errored) return;
-      thinkingListeners.forEach(listener => listener(thinking));
-    },
-    
-    sendToolCall(callId: string, name: string, args: unknown) {
-      if (completed || errored) return;
-      toolCallListeners.forEach(listener => listener(callId, name, args));
+      eventListeners.forEach(listener => listener(event));
     },
     
     error(err: Error) {
@@ -497,27 +547,11 @@ function createAssistantMessageEventStream(): AssistantMessageEventStream {
       completeListeners.forEach(listener => listener());
     },
     
-    onText(listener: (text: string) => void) {
-      textListeners.push(listener);
+    onEvent(listener: (event: AssistantMessageEvent) => void) {
+      eventListeners.push(listener);
       return () => {
-        const index = textListeners.indexOf(listener);
-        if (index > -1) textListeners.splice(index, 1);
-      };
-    },
-    
-    onThinking(listener: (thinking: string) => void) {
-      thinkingListeners.push(listener);
-      return () => {
-        const index = thinkingListeners.indexOf(listener);
-        if (index > -1) thinkingListeners.splice(index, 1);
-      };
-    },
-    
-    onToolCall(listener: (callId: string, name: string, args: unknown) => void) {
-      toolCallListeners.push(listener);
-      return () => {
-        const index = toolCallListeners.indexOf(listener);
-        if (index > -1) toolCallListeners.splice(index, 1);
+        const index = eventListeners.indexOf(listener);
+        if (index > -1) eventListeners.splice(index, 1);
       };
     },
     

@@ -2,20 +2,22 @@
  * Unit tests for Tool Schema Writer
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeToolSchemas, areSchemasStale, readToolSchemas, getSchemaFilePath, DENYLIST } from './tool-schema-writer.js';
 import { existsSync, readFileSync, unlinkSync, mkdirSync, rmSync } from 'fs';
-import { join, dirname } from 'path';
-import { homedir } from 'os';
+import { dirname } from 'path';
 import { Type } from '@sinclair/typebox';
 
-// Mock tool schemas for testing
+// Mock tool schemas for testing (representative of real GSD tools)
 const mockTools = [
+  // Core file operations
   {
     name: 'read',
     description: 'Read a file from disk',
     parameters: Type.Object({
       path: Type.String({ description: 'File path to read' }),
+      offset: Type.Optional(Type.Number({ description: 'Line number to start from' })),
+      limit: Type.Optional(Type.Number({ description: 'Maximum lines to read' })),
     }),
   },
   {
@@ -27,13 +29,48 @@ const mockTools = [
     }),
   },
   {
+    name: 'edit',
+    description: 'Edit a file by replacing exact text',
+    parameters: Type.Object({
+      path: Type.String({ description: 'File path to edit' }),
+      oldText: Type.String({ description: 'Exact text to find and replace' }),
+      newText: Type.String({ description: 'New text to replace with' }),
+    }),
+  },
+  // Shell operations
+  {
     name: 'bash',
     description: 'Execute a shell command',
     parameters: Type.Object({
       command: Type.String({ description: 'Shell command to execute' }),
+      timeout: Type.Optional(Type.Number({ description: 'Timeout in seconds' })),
     }),
   },
-  // Denylist tools
+  // Search operations
+  {
+    name: 'grep',
+    description: 'Search for text patterns in files',
+    parameters: Type.Object({
+      pattern: Type.String({ description: 'Regex pattern to search' }),
+      path: Type.Optional(Type.String({ description: 'Directory to search in' })),
+    }),
+  },
+  {
+    name: 'find',
+    description: 'Find files by name or pattern',
+    parameters: Type.Object({
+      name: Type.Optional(Type.String({ description: 'File name pattern' })),
+      path: Type.Optional(Type.String({ description: 'Directory to search in' })),
+    }),
+  },
+  {
+    name: 'ls',
+    description: 'List directory contents',
+    parameters: Type.Object({
+      path: Type.Optional(Type.String({ description: 'Directory path to list' })),
+    }),
+  },
+  // Denylist tools (search-related, handled separately)
   {
     name: 'gemini_cli_search',
     description: 'Search the web using Gemini CLI',
@@ -121,15 +158,19 @@ describe('tool-schema-writer', () => {
       const result = writeToolSchemas(mockPi);
       const schemas = readToolSchemas();
 
-      // Should have 3 tools (read, write, bash)
-      expect(result.toolCount).toBe(3);
-      expect(schemas.length).toBe(3);
+      // Should have 7 tools (read, write, edit, bash, grep, find, ls)
+      expect(result.toolCount).toBe(7);
+      expect(schemas.length).toBe(7);
 
       // Verify denylist tools are excluded
       const toolNames = schemas.map(s => s.name);
       expect(toolNames).toContain('read');
       expect(toolNames).toContain('write');
+      expect(toolNames).toContain('edit');
       expect(toolNames).toContain('bash');
+      expect(toolNames).toContain('grep');
+      expect(toolNames).toContain('find');
+      expect(toolNames).toContain('ls');
       
       expect(toolNames).not.toContain('gemini_cli_search');
       expect(toolNames).not.toContain('search_the_web');
@@ -207,7 +248,7 @@ describe('tool-schema-writer', () => {
       const parsed = JSON.parse(content);
 
       expect(Array.isArray(parsed)).toBe(true);
-      expect(parsed.length).toBe(3); // 3 non-denylist tools
+      expect(parsed.length).toBe(7); // 7 non-denylist tools
     });
 
     it('should write formatted JSON (pretty-printed)', () => {
@@ -257,17 +298,17 @@ describe('tool-schema-writer', () => {
       };
 
       const mockPi2 = {
-        getAllTools: () => mockTools.slice(0, 3), // 3 tools
+        getAllTools: () => mockTools.slice(0, 5), // 5 tools
       };
 
       // First write with 2 tools
       writeToolSchemas(mockPi1);
 
-      // Second write with 3 tools
+      // Second write with 5 tools
       const result = writeToolSchemas(mockPi2);
 
       expect(result.isStale).toBe(true);
-      expect(result.toolCount).toBe(3);
+      expect(result.toolCount).toBe(5);
     });
 
     it('should detect staleness correctly with areSchemasStale', () => {
@@ -286,7 +327,7 @@ describe('tool-schema-writer', () => {
 
       // Change tools
       const mockPi2 = {
-        getAllTools: () => mockTools.slice(0, 1),
+        getAllTools: () => mockTools.slice(0, 4),
       };
 
       // Should be stale now
@@ -308,8 +349,8 @@ describe('tool-schema-writer', () => {
       writeToolSchemas(mockPi);
       const schemas = readToolSchemas();
 
-      expect(schemas.length).toBe(3);
-      expect(schemas.map(s => s.name)).toEqual(['read', 'write', 'bash']);
+      expect(schemas.length).toBe(7);
+      expect(schemas.map(s => s.name)).toEqual(['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls']);
     });
   });
 });

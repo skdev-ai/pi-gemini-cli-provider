@@ -15,6 +15,6 @@
 // Spike 2: MCP tool execution callback to GSD
 // Spike 3: A2A SSE → GSD AssistantMessageEventStream
 
-export default function(pi: any) {
+export default function(_pi: any) {
   // Placeholder — will register provider after spikes
 }

@@ -7,9 +7,18 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
-import { join, dirname } from 'path';
-import type { ToolInfo } from '@gsd/pi-coding-agent';
-import type { Static, TSchema } from '@sinclair/typebox';
+import { dirname, join } from 'path';
+import type { TSchema } from '@sinclair/typebox';
+
+/**
+ * Tool info matching the PI ExtensionAPI.getAllTools() return type.
+ * Defined locally to avoid dependency on @gsd/pi-coding-agent.
+ */
+export interface ToolInfo {
+  name: string;
+  description: string;
+  parameters: TSchema;
+}
 
 /**
  * Denylist of search-related tools to exclude from MCP exposure.
@@ -70,8 +79,13 @@ function filterAndConvertTools(tools: ToolInfo[]): ToolSchema[] {
 
 /**
  * Get the schema file path.
+ * Uses PI_GEMINI_SCHEMA_PATH env var if set (for testing), otherwise defaults to standard location.
  */
 export function getSchemaFilePath(): string {
+  const envPath = process.env.PI_GEMINI_SCHEMA_PATH;
+  if (envPath) {
+    return envPath;
+  }
   return join(homedir(), '.pi', 'agent', 'extensions', 'pi-gemini-cli-provider', 'tool-schemas.json');
 }
 
@@ -99,7 +113,6 @@ export function writeToolSchemas(pi: { getAllTools(): ToolInfo[] }): WriteToolSc
   if (existsSync(schemaFilePath)) {
     try {
       const existingContent = readFileSync(schemaFilePath, 'utf-8');
-      const existingSchemas = JSON.parse(existingContent) as ToolSchema[];
       
       // Compare schemas (simple JSON string comparison for now)
       const newContent = JSON.stringify(filteredSchemas, null, 2);
@@ -135,7 +148,6 @@ export function areSchemasStale(pi: { getAllTools(): ToolInfo[] }): boolean {
     const allTools = pi.getAllTools();
     const filteredSchemas = filterAndConvertTools(allTools);
     const existingContent = readFileSync(schemaFilePath, 'utf-8');
-    const existingSchemas = JSON.parse(existingContent) as ToolSchema[];
     
     // Compare by JSON string representation
     const newContent = JSON.stringify(filteredSchemas, null, 2);

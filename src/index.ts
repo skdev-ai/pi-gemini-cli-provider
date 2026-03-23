@@ -111,6 +111,15 @@ export type {
   PartialAssistantMessage,
 } from './types.js';
 
+// Export S04 streamSimple orchestration
+export {
+  streamSimple,
+} from './stream-simple.js';
+export type {
+  StreamSimpleParams,
+  StreamSimpleResult,
+} from './stream-simple.js';
+
 interface ExtensionAPI {
   getAllTools(): any[];
   on(event: string, handler: Function): void;

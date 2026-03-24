@@ -132,7 +132,7 @@ export interface A2AServerState {
   /** Ring buffer of last 50 stdout lines for debugging */
   stdoutBuffer: string[];
   /** Ring buffer of last 50 stderr lines for debugging */
-  stderrBuffer: [];
+  stderrBuffer: string[];
 }
 
 /**

@@ -19,12 +19,14 @@ import {
   createTask,
   createTaskWithIds,
 } from './task-manager.js';
+import { incrementProviderTaskCount } from './a2a-lifecycle.js';
 import type { ParsedA2AEvent } from './types.js';
 
 // Mock dependencies
 vi.mock('./a2a-client.js');
 vi.mock('./sse-parser.js');
 vi.mock('./task-manager.js');
+vi.mock('./a2a-lifecycle.js');
 
 const mockSendMessageStream = vi.mocked(sendMessageStream);
 const mockInjectResult = vi.mocked(injectResult);
@@ -37,6 +39,7 @@ const mockGetPendingToolCalls = vi.mocked(getPendingToolCalls);
 const mockClearPendingToolCalls = vi.mocked(clearPendingToolCalls);
 const mockMarkTaskFailed = vi.mocked(markTaskFailed);
 const mockClearAllTasks = vi.mocked(clearAllTasks);
+const mockIncrementProviderTaskCount = vi.mocked(incrementProviderTaskCount);
 
 // Mock console to suppress noise
 vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -121,8 +124,9 @@ function createStateChangeEvent(
 
 describe('streamSimple', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mockClearAllTasks();
+    mockIncrementProviderTaskCount.mockResolvedValue();
   });
 
   describe('Fresh Prompt Flow', () => {

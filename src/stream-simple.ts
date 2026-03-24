@@ -38,6 +38,7 @@ import {
   updatePartialMessage,
   translateEvents,
 } from './event-bridge.js';
+import { incrementProviderTaskCount } from './a2a-lifecycle.js';
 
 // ============================================================================
 // Pi Stream Type (local definition since 'pi' module not available at build time)
@@ -145,6 +146,9 @@ export async function streamSimple(params: StreamSimpleParams): Promise<{
   // Create a promise that resolves when streaming completes
   const resultPromise = (async (): Promise<StreamSimpleResult> => {
     try {
+      // Increment provider task count for tracking and restart mitigation
+      await incrementProviderTaskCount();
+      
       // Check if this is a re-call (tool results present)
       const isReCall = detectReCall(context.messages);
       

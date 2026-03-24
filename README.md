@@ -318,6 +318,39 @@ npm test -- src/gemini-cli-command.test.ts
 npm run test:coverage
 ```
 
+### Live Integration Tests
+
+The provider includes live end-to-end tests that verify the full A2A integration with a real server. These tests are env-gated and require:
+
+1. **A2A server installed and patched** (all 3 patches):
+   ```bash
+   /gemini-cli install-a2a
+   ```
+
+2. **OAuth authentication**:
+   ```bash
+   gemini auth login
+   ```
+
+3. **A2A server running**:
+   ```bash
+   /gemini-cli server start
+   ```
+
+Run live tests:
+```bash
+GEMINI_A2A_LIVE=1 npm test -- src/integration.test.ts
+```
+
+**What the live tests verify:**
+- Prerequisite checks (patches, server health)
+- MCP tool call interception (`stopReason: 'toolUse'`)
+- Result reinjection via `inject_result` (continuation without empty follow-up prompt)
+- Multi-turn conversation continuity (taskId/contextId reuse)
+- Error handling (server down, invalid model)
+
+**Note:** Live tests may take 30-60 seconds to run as they make real API calls to Gemini. Tests will skip if `GEMINI_A2A_LIVE` is not set to `1`.
+
 ### Type Checking
 
 ```bash

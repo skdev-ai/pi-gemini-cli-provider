@@ -51,7 +51,7 @@ export interface A2AStartupConfig {
 const A2A_PORT = 41242;
 const STARTUP_TIMEOUT_MS = 30000; // 30s timeout (12s boot + generous margin)
 const RING_BUFFER_MAX = 50;
-const SEARCH_COUNT_RESTART_THRESHOLD = 1000;
+const TASK_COUNT_RESTART_THRESHOLD = 1000;
 const READY_MARKER = 'Agent Server started';
 
 // ============================================================================
@@ -632,8 +632,8 @@ export async function incrementSearchCount(): Promise<void> {
   log(`Search count incremented to ${newCount}`);
 
   // Check if restart is needed
-  if (newCount >= SEARCH_COUNT_RESTART_THRESHOLD) {
-    log(`Search count reached ${SEARCH_COUNT_RESTART_THRESHOLD}, triggering restart`);
+  if (newCount >= TASK_COUNT_RESTART_THRESHOLD) {
+    log(`Search count reached ${TASK_COUNT_RESTART_THRESHOLD}, triggering restart`);
     
     // Stop the server
     await stopServer();
@@ -673,8 +673,8 @@ export async function incrementProviderTaskCount(): Promise<void> {
   log(`Provider task count incremented to ${newCount}`);
 
   // Check if restart is needed
-  if (newCount >= SEARCH_COUNT_RESTART_THRESHOLD) {
-    log(`Provider task count reached ${SEARCH_COUNT_RESTART_THRESHOLD}, triggering restart`);
+  if (newCount >= TASK_COUNT_RESTART_THRESHOLD) {
+    log(`Provider task count reached ${TASK_COUNT_RESTART_THRESHOLD}, triggering restart`);
     
     // Stop the server
     await stopServer();

@@ -132,9 +132,11 @@ interface ExtensionAPI {
   getAllTools(): any[];
   on(event: string, handler: Function): void;
   registerProvider(id: string, config: {
+    api: string;
+    baseUrl: string;
+    apiKey: string;
     models: any[];
     streamSimple: Function;
-    api?: unknown;
   }): void;
   registerCommand(name: string, config: {
     description: string;

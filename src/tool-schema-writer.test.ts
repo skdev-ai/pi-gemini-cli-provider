@@ -2,7 +2,7 @@
  * Unit tests for Tool Schema Writer
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeToolSchemas, areSchemasStale, readToolSchemas, DENYLIST } from './tool-schema-writer.js';
 import { existsSync, readFileSync, unlinkSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
@@ -121,7 +121,10 @@ describe('tool-schema-writer', () => {
   const schemaFileName = `test-tool-schemas-writer-${process.pid}.json`;
   const schemaFilePath = join(schemaDir, schemaFileName);
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Reset modules to ensure clean state and fresh env var reading
+    vi.resetModules();
+    
     // Set unique schema path for this test file to avoid race conditions
     process.env.PI_GEMINI_SCHEMA_PATH = join(schemaDir, schemaFileName);
     

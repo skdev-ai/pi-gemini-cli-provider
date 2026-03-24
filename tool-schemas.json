@@ -1,0 +1,1466 @@
+[
+  {
+    "name": "read",
+    "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "description": "Path to the file to read (relative or absolute)",
+          "type": "string"
+        },
+        "offset": {
+          "description": "Line number to start reading from (1-indexed)",
+          "type": "number"
+        },
+        "limit": {
+          "description": "Maximum number of lines to read",
+          "type": "number"
+        }
+      }
+    }
+  },
+  {
+    "name": "bash",
+    "description": "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "description": "Bash command to execute",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Timeout in seconds (optional, no default timeout)",
+          "type": "number"
+        }
+      }
+    }
+  },
+  {
+    "name": "edit",
+    "description": "Edit a file by replacing exact text. The oldText must match exactly (including whitespace). Use this for precise, surgical edits.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "path",
+        "oldText",
+        "newText"
+      ],
+      "properties": {
+        "path": {
+          "description": "Path to the file to edit (relative or absolute)",
+          "type": "string"
+        },
+        "oldText": {
+          "description": "Exact text to find and replace (must match exactly)",
+          "type": "string"
+        },
+        "newText": {
+          "description": "New text to replace the old text with",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "write",
+    "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "path",
+        "content"
+      ],
+      "properties": {
+        "path": {
+          "description": "Path to the file to write (relative or absolute)",
+          "type": "string"
+        },
+        "content": {
+          "description": "Content to write to the file",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "grep",
+    "description": "Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to 100 matches or 50KB (whichever is hit first). Long lines are truncated to 500 chars.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "pattern"
+      ],
+      "properties": {
+        "pattern": {
+          "description": "Search pattern (regex or literal string)",
+          "type": "string"
+        },
+        "path": {
+          "description": "Directory or file to search (default: current directory)",
+          "type": "string"
+        },
+        "glob": {
+          "description": "Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts'",
+          "type": "string"
+        },
+        "ignoreCase": {
+          "description": "Case-insensitive search (default: false)",
+          "type": "boolean"
+        },
+        "literal": {
+          "description": "Treat pattern as literal string instead of regex (default: false)",
+          "type": "boolean"
+        },
+        "context": {
+          "description": "Number of lines to show before and after each match (default: 0)",
+          "type": "number"
+        },
+        "limit": {
+          "description": "Maximum number of matches to return (default: 100)",
+          "type": "number"
+        }
+      }
+    }
+  },
+  {
+    "name": "find",
+    "description": "Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to 1000 results or 50KB (whichever is hit first).",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "pattern"
+      ],
+      "properties": {
+        "pattern": {
+          "description": "Glob pattern to match files, e.g. '*.ts', '**/*.json', or 'src/**/*.spec.ts'",
+          "type": "string"
+        },
+        "path": {
+          "description": "Directory to search in (default: current directory)",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum number of results (default: 1000)",
+          "type": "number"
+        }
+      }
+    }
+  },
+  {
+    "name": "ls",
+    "description": "List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles. Output is truncated to 500 entries or 50KB (whichever is hit first).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Directory to list (default: current directory)",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum number of entries to return (default: 500)",
+          "type": "number"
+        }
+      }
+    }
+  },
+  {
+    "name": "lsp",
+    "description": "Interacts with Language Server Protocol servers for code intelligence.\n\n<operations>\n- `diagnostics`: Get errors/warnings for file, glob, or entire workspace (no file)\n- `definition`: Go to symbol definition → file path + position + 3-line source context\n- `type_definition`: Go to symbol type definition → file path + position + 3-line source context\n- `implementation`: Find concrete implementations → file path + position + 3-line source context\n- `references`: Find references → locations with 3-line source context (first 50), remaining location-only\n- `hover`: Get type info and documentation → type signature + docs\n- `symbols`: List symbols in file, or search workspace (with query, no file)\n- `incoming_calls`: Find all callers of a function → call sites with context\n- `outgoing_calls`: Find all functions called by a function → callees with context\n- `rename`: Rename symbol across codebase → preview or apply edits\n- `code_actions`: List available quick-fixes/refactors/import actions; apply one when `apply: true` and `query` matches title or index\n- `format`: Format file using language server formatter → applies edits in-place\n- `signature`: Get function signature and parameter info at cursor position\n- `status`: Show active language servers\n- `reload`: Restart the language server\n</operations>\n\n<parameters>\n- `file`: File path; for diagnostics it may be a glob pattern (e.g., `src/**/*.ts`)\n- `line`: 1-indexed line number for position-based actions\n- `symbol`: Substring on the target line used to resolve column automatically\n- `occurrence`: 1-indexed match index when `symbol` appears multiple times on the same line\n- `query`: Symbol search query, code-action kind filter (list mode), or code-action selector (apply mode)\n- `new_name`: Required for rename\n- `apply`: Apply edits for rename/code_actions (default true for rename, list mode for code_actions unless explicitly true)\n- `tab_size`: Tab size for formatting (default: 4)\n- `insert_spaces`: Use spaces for formatting (default: true)\n- `timeout`: Request timeout in seconds (clamped to 5-60, default 20)\n</parameters>\n\n<caution>\n- Requires running LSP server for target language\n- Some operations require file to be saved to disk\n- Diagnostics glob mode samples up to 20 files per request to avoid long-running stalls on broad patterns\n- When `symbol` is provided for position-based actions, missing symbols or out-of-bounds `occurrence` values return an explicit error instead of silently falling back\n</caution>\n",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "action"
+      ],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "diagnostics",
+            "definition",
+            "references",
+            "hover",
+            "symbols",
+            "rename",
+            "code_actions",
+            "type_definition",
+            "implementation",
+            "incoming_calls",
+            "outgoing_calls",
+            "format",
+            "signature",
+            "status",
+            "reload"
+          ],
+          "description": "LSP operation"
+        },
+        "file": {
+          "description": "File path",
+          "type": "string"
+        },
+        "line": {
+          "description": "Line number (1-indexed)",
+          "type": "number"
+        },
+        "symbol": {
+          "description": "Symbol/substring to locate on the line (used to compute column)",
+          "type": "string"
+        },
+        "occurrence": {
+          "description": "Symbol occurrence on line (1-indexed, default: 1)",
+          "type": "number"
+        },
+        "query": {
+          "description": "Search query or SSR pattern",
+          "type": "string"
+        },
+        "new_name": {
+          "description": "New name for rename",
+          "type": "string"
+        },
+        "apply": {
+          "description": "Apply edits (default: true)",
+          "type": "boolean"
+        },
+        "tab_size": {
+          "description": "Tab size for formatting (default: 4)",
+          "type": "number"
+        },
+        "insert_spaces": {
+          "description": "Use spaces for formatting (default: true)",
+          "type": "boolean"
+        },
+        "timeout": {
+          "description": "Request timeout in seconds",
+          "type": "number"
+        }
+      }
+    }
+  },
+  {
+    "name": "hashline_edit",
+    "description": "Edit a file by referencing LINE#ID tags from read output. Each tag uniquely identifies a line via content hash, so edits remain stable even when lines shift.\n\nRead the file first to get fresh tags. Submit one edit call per file with all operations batched.\n\nOperations:\n- replace: Replace line(s) at pos (and optionally through end) with lines content\n- append: Insert lines after pos (omit pos for end of file)\n- prepend: Insert lines before pos (omit pos for beginning of file)\n\nSet lines to null or [] to delete lines. Set delete:true to delete the file.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "edits"
+      ],
+      "properties": {
+        "path": {
+          "description": "Path to the file to edit",
+          "type": "string"
+        },
+        "edits": {
+          "description": "Edits to apply (referenced by LINE#ID tags from read output)",
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "op",
+              "lines"
+            ],
+            "properties": {
+              "op": {
+                "anyOf": [
+                  {
+                    "const": "replace",
+                    "type": "string"
+                  },
+                  {
+                    "const": "append",
+                    "type": "string"
+                  },
+                  {
+                    "const": "prepend",
+                    "type": "string"
+                  }
+                ]
+              },
+              "pos": {
+                "description": "Anchor tag (e.g. \"5#QQ\")",
+                "type": "string"
+              },
+              "end": {
+                "description": "End anchor for range replace",
+                "type": "string"
+              },
+              "lines": {
+                "anyOf": [
+                  {
+                    "description": "Replacement content lines",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "delete": {
+          "description": "If true, delete the file",
+          "type": "boolean"
+        },
+        "move": {
+          "description": "If set, move/rename the file to this path",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "read",
+    "description": "Read a file with LINE#ID hash anchors on each line. These anchors are used by hashline_edit for precise edits. Output format: LINENUM#HASH:CONTENT. Supports text files and images. For text files, output is truncated to 2000 lines or 50KB. Use offset/limit for large files.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "description": "Path to the file to read (relative or absolute)",
+          "type": "string"
+        },
+        "offset": {
+          "description": "Line number to start reading from (1-indexed)",
+          "type": "number"
+        },
+        "limit": {
+          "description": "Maximum number of lines to read",
+          "type": "number"
+        }
+      }
+    }
+  },
+  {
+    "name": "Skill",
+    "description": "Execute a skill within the main conversation. Use this tool when users ask for a slash command or reference a skill by name. Returns the expanded skill block and appends args after it.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "skill"
+      ],
+      "properties": {
+        "skill": {
+          "description": "The skill name. E.g., 'commit', 'review-pr', or 'pdf'",
+          "type": "string"
+        },
+        "args": {
+          "description": "Optional arguments for the skill",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "mcp",
+    "description": "MCP gateway - connect to MCP servers and call their tools.\n\nUsage:\n  mcp({ })                              → Show server status\n  mcp({ server: \"name\" })               → List tools from server\n  mcp({ search: \"query\" })              → Search for tools (MCP + pi, space-separated words OR'd)\n  mcp({ describe: \"tool_name\" })        → Show tool details and parameters\n  mcp({ connect: \"server-name\" })       → Connect to a server and refresh metadata\n  mcp({ tool: \"name\", args: '{\"key\": \"value\"}' })    → Call a tool (args is JSON string)\n  mcp({ action: \"ui-messages\" })        → Retrieve accumulated messages from completed UI sessions\n\nMode: tool (call) > connect > describe > search > server (list) > action > nothing (status)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tool": {
+          "description": "Tool name to call (e.g., 'xcodebuild_list_sims')",
+          "type": "string"
+        },
+        "args": {
+          "description": "Arguments as JSON string (e.g., '{\"key\": \"value\"}')",
+          "type": "string"
+        },
+        "connect": {
+          "description": "Server name to connect (lazy connect + metadata refresh)",
+          "type": "string"
+        },
+        "describe": {
+          "description": "Tool name to describe (shows parameters)",
+          "type": "string"
+        },
+        "search": {
+          "description": "Search tools by name/description",
+          "type": "string"
+        },
+        "regex": {
+          "description": "Treat search as regex (default: substring match)",
+          "type": "boolean"
+        },
+        "includeSchemas": {
+          "description": "Include parameter schemas in search results (default: true)",
+          "type": "boolean"
+        },
+        "server": {
+          "description": "Filter to specific server (also disambiguates tool calls)",
+          "type": "string"
+        },
+        "action": {
+          "description": "Action: 'ui-messages' to retrieve prompts/intents from UI sessions",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "ask_user_questions",
+    "description": "Request user input for one to three short questions and wait for the response. Single-select questions have 2-3 mutually exclusive options with a free-form 'None of the above' added automatically. Multi-select questions (allowMultiple: true) let the user toggle multiple options with SPACE and confirm with ENTER.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "questions"
+      ],
+      "properties": {
+        "questions": {
+          "description": "Questions to show the user. Prefer 1 and do not exceed 3.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "header",
+              "question",
+              "options"
+            ],
+            "properties": {
+              "id": {
+                "description": "Stable identifier for mapping answers (snake_case)",
+                "type": "string"
+              },
+              "header": {
+                "description": "Short header label shown in the UI (12 or fewer chars)",
+                "type": "string"
+              },
+              "question": {
+                "description": "Single-sentence prompt shown to the user",
+                "type": "string"
+              },
+              "options": {
+                "description": "Provide 2-3 mutually exclusive choices for single-select, or any number for multi-select. Put the recommended option first and suffix its label with \"(Recommended)\". Do not include an \"Other\" option for single-select; the client adds a free-form \"None of the above\" option automatically.",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "label",
+                    "description"
+                  ],
+                  "properties": {
+                    "label": {
+                      "description": "User-facing label (1-5 words)",
+                      "type": "string"
+                    },
+                    "description": {
+                      "description": "One short sentence explaining impact/tradeoff if selected",
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "allowMultiple": {
+                "description": "If true, the user can select multiple options using SPACE to toggle and ENTER to confirm. No 'None of the above' option is added. Default: false.",
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "async_bash",
+    "description": "Run a bash command in the background. Returns a job ID immediately so you can continue working. Use await_job to get results or cancel_job to stop. Ideal for long-running builds, tests, or installs. Output is truncated to the last 2000 lines or 50KB.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "description": "Bash command to execute in the background",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Timeout in seconds (optional)",
+          "type": "number"
+        },
+        "label": {
+          "description": "Short label for the job (shown in /jobs). Defaults to a truncated version of the command.",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "await_job",
+    "description": "Wait for background jobs to complete. Provide specific job IDs or omit to wait for the next job that finishes. Returns results of completed jobs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "jobs": {
+          "description": "Job IDs to wait for. Omit to wait for any running job.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "timeout": {
+          "description": "Maximum seconds to wait before returning control. Defaults to 120. Jobs continue running in the background after timeout.",
+          "type": "number"
+        }
+      }
+    }
+  },
+  {
+    "name": "cancel_job",
+    "description": "Cancel a running background job by its ID.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "job_id"
+      ],
+      "properties": {
+        "job_id": {
+          "description": "The background job ID to cancel (e.g. bg_a1b2c3d4)",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "resolve_library",
+    "description": "Search the Context7 library catalogue by name and return matching libraries with metadata. Use this to find the correct library ID before fetching documentation. Results are ranked by trustScore (0–10) and benchmarkScore — prefer the highest. If you already have a library ID (e.g. /vercel/next.js), skip this and call get_library_docs directly.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "libraryName"
+      ],
+      "properties": {
+        "libraryName": {
+          "description": "Library or framework name to search for, e.g. 'react', 'next.js', 'tailwindcss', 'prisma', 'langchain'",
+          "type": "string"
+        },
+        "query": {
+          "description": "Optional: the user's question or topic. Improves search ranking. E.g. 'how do I use server actions?'",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "get_library_docs",
+    "description": "Fetch up-to-date documentation from Context7 for a specific library. Pass the library ID from resolve_library (e.g. /websites/react_dev) and a focused topic query to get the most relevant snippets. The tokens parameter controls how much documentation to retrieve (default 5000, max 10000). A specific query (e.g. 'server actions form submission') returns better results than a broad one.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "libraryId"
+      ],
+      "properties": {
+        "libraryId": {
+          "description": "Context7 library ID from resolve_library, e.g. /websites/react_dev or /vercel/next.js",
+          "type": "string"
+        },
+        "query": {
+          "description": "Specific topic to focus the docs on, e.g. 'server actions', 'useEffect cleanup', 'authentication middleware'. More specific = better results.",
+          "type": "string"
+        },
+        "tokens": {
+          "description": "Max tokens of documentation to return (default 5000, max 10000).",
+          "minimum": 500,
+          "maximum": 10000,
+          "type": "number"
+        }
+      }
+    }
+  },
+  {
+    "name": "secure_env_collect",
+    "description": "Collect one or more env vars through a paged masked-input UI, then write them to .env, Vercel, or Convex. Values are shown masked to the user (e.g. sk-ir***dgdh) and never echoed in tool output.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "keys"
+      ],
+      "properties": {
+        "destination": {
+          "description": "Where to write the collected secrets",
+          "anyOf": [
+            {
+              "const": "dotenv",
+              "type": "string"
+            },
+            {
+              "const": "vercel",
+              "type": "string"
+            },
+            {
+              "const": "convex",
+              "type": "string"
+            }
+          ]
+        },
+        "keys": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "key"
+            ],
+            "properties": {
+              "key": {
+                "description": "Env var name, e.g. OPENAI_API_KEY",
+                "type": "string"
+              },
+              "hint": {
+                "description": "Format hint shown to user, e.g. 'starts with sk-'",
+                "type": "string"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "guidance": {
+                "description": "Step-by-step guidance for finding this key",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "envFilePath": {
+          "description": "Path to .env file (dotenv only). Defaults to .env in cwd.",
+          "type": "string"
+        },
+        "environment": {
+          "description": "Target environment (vercel only)",
+          "anyOf": [
+            {
+              "const": "development",
+              "type": "string"
+            },
+            {
+              "const": "preview",
+              "type": "string"
+            },
+            {
+              "const": "production",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "gsd_decision_save",
+    "description": "Record a project decision to the GSD database and regenerate DECISIONS.md. Decision IDs are auto-assigned — never provide an ID manually.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "scope",
+        "decision",
+        "choice",
+        "rationale"
+      ],
+      "properties": {
+        "scope": {
+          "description": "Scope of the decision (e.g. 'architecture', 'library', 'observability')",
+          "type": "string"
+        },
+        "decision": {
+          "description": "What is being decided",
+          "type": "string"
+        },
+        "choice": {
+          "description": "The choice made",
+          "type": "string"
+        },
+        "rationale": {
+          "description": "Why this choice was made",
+          "type": "string"
+        },
+        "revisable": {
+          "description": "Whether this can be revisited (default: 'Yes')",
+          "type": "string"
+        },
+        "when_context": {
+          "description": "When/context for the decision (e.g. milestone ID)",
+          "type": "string"
+        },
+        "made_by": {
+          "description": "Who made this decision: 'human' (user directed), 'agent' (LLM decided autonomously), or 'collaborative' (discussed and agreed). Default: 'agent'",
+          "anyOf": [
+            {
+              "const": "human",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "collaborative",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "gsd_save_decision",
+    "description": "Record a project decision to the GSD database and regenerate DECISIONS.md. Decision IDs are auto-assigned — never provide an ID manually. (alias for gsd_decision_save — prefer the canonical name)",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "scope",
+        "decision",
+        "choice",
+        "rationale"
+      ],
+      "properties": {
+        "scope": {
+          "description": "Scope of the decision (e.g. 'architecture', 'library', 'observability')",
+          "type": "string"
+        },
+        "decision": {
+          "description": "What is being decided",
+          "type": "string"
+        },
+        "choice": {
+          "description": "The choice made",
+          "type": "string"
+        },
+        "rationale": {
+          "description": "Why this choice was made",
+          "type": "string"
+        },
+        "revisable": {
+          "description": "Whether this can be revisited (default: 'Yes')",
+          "type": "string"
+        },
+        "when_context": {
+          "description": "When/context for the decision (e.g. milestone ID)",
+          "type": "string"
+        },
+        "made_by": {
+          "description": "Who made this decision: 'human' (user directed), 'agent' (LLM decided autonomously), or 'collaborative' (discussed and agreed). Default: 'agent'",
+          "anyOf": [
+            {
+              "const": "human",
+              "type": "string"
+            },
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "collaborative",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "gsd_requirement_update",
+    "description": "Update an existing requirement in the GSD database and regenerate REQUIREMENTS.md. Provide the requirement ID (e.g. R001) and any fields to update.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "description": "The requirement ID (e.g. R001, R014)",
+          "type": "string"
+        },
+        "status": {
+          "description": "New status (e.g. 'active', 'validated', 'deferred')",
+          "type": "string"
+        },
+        "validation": {
+          "description": "Validation criteria or proof",
+          "type": "string"
+        },
+        "notes": {
+          "description": "Additional notes",
+          "type": "string"
+        },
+        "description": {
+          "description": "Updated description",
+          "type": "string"
+        },
+        "primary_owner": {
+          "description": "Primary owning slice",
+          "type": "string"
+        },
+        "supporting_slices": {
+          "description": "Supporting slices",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "gsd_update_requirement",
+    "description": "Update an existing requirement in the GSD database and regenerate REQUIREMENTS.md. Provide the requirement ID (e.g. R001) and any fields to update. (alias for gsd_requirement_update — prefer the canonical name)",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "description": "The requirement ID (e.g. R001, R014)",
+          "type": "string"
+        },
+        "status": {
+          "description": "New status (e.g. 'active', 'validated', 'deferred')",
+          "type": "string"
+        },
+        "validation": {
+          "description": "Validation criteria or proof",
+          "type": "string"
+        },
+        "notes": {
+          "description": "Additional notes",
+          "type": "string"
+        },
+        "description": {
+          "description": "Updated description",
+          "type": "string"
+        },
+        "primary_owner": {
+          "description": "Primary owning slice",
+          "type": "string"
+        },
+        "supporting_slices": {
+          "description": "Supporting slices",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "gsd_summary_save",
+    "description": "Save a summary, research, context, or assessment artifact to the GSD database and write it to disk. Computes the file path from milestone/slice/task IDs automatically.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "milestone_id",
+        "artifact_type",
+        "content"
+      ],
+      "properties": {
+        "milestone_id": {
+          "description": "Milestone ID (e.g. M001)",
+          "type": "string"
+        },
+        "slice_id": {
+          "description": "Slice ID (e.g. S01)",
+          "type": "string"
+        },
+        "task_id": {
+          "description": "Task ID (e.g. T01)",
+          "type": "string"
+        },
+        "artifact_type": {
+          "description": "One of: SUMMARY, RESEARCH, CONTEXT, ASSESSMENT",
+          "type": "string"
+        },
+        "content": {
+          "description": "The full markdown content of the artifact",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "gsd_save_summary",
+    "description": "Save a summary, research, context, or assessment artifact to the GSD database and write it to disk. Computes the file path from milestone/slice/task IDs automatically. (alias for gsd_summary_save — prefer the canonical name)",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "milestone_id",
+        "artifact_type",
+        "content"
+      ],
+      "properties": {
+        "milestone_id": {
+          "description": "Milestone ID (e.g. M001)",
+          "type": "string"
+        },
+        "slice_id": {
+          "description": "Slice ID (e.g. S01)",
+          "type": "string"
+        },
+        "task_id": {
+          "description": "Task ID (e.g. T01)",
+          "type": "string"
+        },
+        "artifact_type": {
+          "description": "One of: SUMMARY, RESEARCH, CONTEXT, ASSESSMENT",
+          "type": "string"
+        },
+        "content": {
+          "description": "The full markdown content of the artifact",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "gsd_milestone_generate_id",
+    "description": "Generate the next milestone ID for a new GSD milestone. Scans existing milestones on disk and respects the unique_milestone_ids preference. Always use this tool when creating a new milestone — never invent milestone IDs manually.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "gsd_generate_milestone_id",
+    "description": "Generate the next milestone ID for a new GSD milestone. Scans existing milestones on disk and respects the unique_milestone_ids preference. Always use this tool when creating a new milestone — never invent milestone IDs manually. (alias for gsd_milestone_generate_id — prefer the canonical name)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "gsd_journal_query",
+    "description": "Query the structured event journal for auto-mode iterations. Returns matching journal entries filtered by flow ID, unit ID, rule name, event type, or time range.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "flowId": {
+          "description": "Filter by flow ID (UUID grouping one iteration)",
+          "type": "string"
+        },
+        "unitId": {
+          "description": "Filter by unit ID (e.g. M001/S01/T01) from event data",
+          "type": "string"
+        },
+        "rule": {
+          "description": "Filter by rule name from the unified registry",
+          "type": "string"
+        },
+        "eventType": {
+          "description": "Filter by event type (e.g. dispatch-match, unit-start)",
+          "type": "string"
+        },
+        "after": {
+          "description": "ISO-8601 lower bound (inclusive)",
+          "type": "string"
+        },
+        "before": {
+          "description": "ISO-8601 upper bound (inclusive)",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Maximum entries to return (default: 100)",
+          "default": 100,
+          "type": "number"
+        }
+      }
+    }
+  },
+  {
+    "name": "mac_check_permissions",
+    "description": "Check whether macOS Accessibility and Screen Recording permissions are enabled for the current terminal. Returns { accessibilityEnabled, screenRecordingEnabled }. Accessibility is required for UI automation; Screen Recording is required for mac_screenshot. Both are granted in System Settings > Privacy & Security.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "mac_list_apps",
+    "description": "List all running macOS applications. Returns an array of { name, bundleId, pid, isActive } for user-facing apps (regular activation policy). Set includeBackground to true to also include accessory/background apps.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "includeBackground": {
+          "description": "Include background/accessory apps (default: false)",
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  {
+    "name": "mac_launch_app",
+    "description": "Launch a macOS application by name or bundle ID. Returns { launched, name, bundleId, pid } on success. Provide either 'name' (e.g. 'TextEdit') or 'bundleId' (e.g. 'com.apple.TextEdit').",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Application name (e.g. 'TextEdit', 'Safari')",
+          "type": "string"
+        },
+        "bundleId": {
+          "description": "Bundle identifier (e.g. 'com.apple.TextEdit')",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "mac_activate_app",
+    "description": "Bring a running macOS application to the front. Returns { activated, name } on success. Errors if the app is not running. Provide either 'name' or 'bundleId'.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Application name",
+          "type": "string"
+        },
+        "bundleId": {
+          "description": "Bundle identifier",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "mac_quit_app",
+    "description": "Quit a running macOS application. Returns { quit, name } on success. Errors if the app is not running. Provide either 'name' or 'bundleId'.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Application name",
+          "type": "string"
+        },
+        "bundleId": {
+          "description": "Bundle identifier",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "mac_list_windows",
+    "description": "List all on-screen windows for a macOS application. Returns an array of { windowId, title, bounds: {x,y,width,height}, isOnScreen, layer }. The windowId can be used with getWindowInfo for detailed inspection or with screenshotWindow for capture. Returns an empty array (not error) if the app is running but has no visible windows. Errors if the app is not running.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "app"
+      ],
+      "properties": {
+        "app": {
+          "description": "Application name (e.g. 'TextEdit') or bundle identifier (e.g. 'com.apple.TextEdit')",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "mac_find",
+    "description": "Find UI elements in a macOS application's accessibility tree. Three modes:\n- 'search' (default): Find elements matching role/title/value/identifier criteria. Returns a numbered list of matches.\n- 'tree': Dump the full accessibility subtree as an indented tree. Use maxDepth/maxCount to bound output.\n- 'focused': Get the currently focused element in the app. No criteria needed.\nThe 'app' param accepts an app name (e.g. 'Finder') or bundle ID (e.g. 'com.apple.Finder').",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "app"
+      ],
+      "properties": {
+        "app": {
+          "description": "Application name or bundle identifier",
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "search",
+            "tree",
+            "focused"
+          ],
+          "description": "'search' (default), 'tree', or 'focused'"
+        },
+        "role": {
+          "description": "AX role to match (e.g. 'AXButton', 'AXTextArea')",
+          "type": "string"
+        },
+        "title": {
+          "description": "AX title to match",
+          "type": "string"
+        },
+        "value": {
+          "description": "AX value to match",
+          "type": "string"
+        },
+        "identifier": {
+          "description": "AX identifier to match",
+          "type": "string"
+        },
+        "matchType": {
+          "description": "'exact' (default) or 'contains'",
+          "type": "string"
+        },
+        "maxDepth": {
+          "description": "Maximum tree depth to traverse (default: 10)",
+          "type": "number"
+        },
+        "maxCount": {
+          "description": "Maximum elements to return/visit (default: 100)",
+          "type": "number"
+        }
+      }
+    }
+  },
+  {
+    "name": "mac_get_tree",
+    "description": "Get a compact accessibility tree of a macOS application's UI structure. Returns an indented tree showing role, title, and value of each element. Tighter defaults than mac_find's tree mode — designed for quick structure inspection. Each line: `role \"title\" [value]` with 2-space indent per depth level. Omits title/value when nil or empty.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "app"
+      ],
+      "properties": {
+        "app": {
+          "description": "Application name or bundle identifier",
+          "type": "string"
+        },
+        "maxDepth": {
+          "description": "Maximum tree depth to traverse (default: 3)",
+          "type": "number"
+        },
+        "maxCount": {
+          "description": "Maximum elements to include (default: 50)",
+          "type": "number"
+        }
+      }
+    }
+  },
+  {
+    "name": "mac_click",
+    "description": "Click a UI element in a macOS application by performing AXPress. Finds the first element matching the given criteria (role, title, value, identifier) and clicks it. At least one criterion is required. Returns the clicked element's attributes.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "app"
+      ],
+      "properties": {
+        "app": {
+          "description": "Application name or bundle identifier",
+          "type": "string"
+        },
+        "role": {
+          "description": "AX role (e.g. 'AXButton', 'AXMenuItem')",
+          "type": "string"
+        },
+        "title": {
+          "description": "AX title to match",
+          "type": "string"
+        },
+        "value": {
+          "description": "AX value to match",
+          "type": "string"
+        },
+        "identifier": {
+          "description": "AX identifier to match",
+          "type": "string"
+        },
+        "matchType": {
+          "description": "'exact' (default) or 'contains'",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "mac_type",
+    "description": "Type text into a UI element in a macOS application by setting its AXValue attribute. Finds the first element matching the given criteria and sets its value. Returns the actual value after setting (read-back verification). At least one criterion is required.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "app",
+        "text"
+      ],
+      "properties": {
+        "app": {
+          "description": "Application name or bundle identifier",
+          "type": "string"
+        },
+        "text": {
+          "description": "Text to type into the element",
+          "type": "string"
+        },
+        "role": {
+          "description": "AX role (e.g. 'AXTextArea', 'AXTextField')",
+          "type": "string"
+        },
+        "title": {
+          "description": "AX title to match",
+          "type": "string"
+        },
+        "value": {
+          "description": "AX value to match",
+          "type": "string"
+        },
+        "identifier": {
+          "description": "AX identifier to match",
+          "type": "string"
+        },
+        "matchType": {
+          "description": "'exact' (default) or 'contains'",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "mac_screenshot",
+    "description": "Take a screenshot of a macOS application window by its window ID (from mac_list_windows). Returns the screenshot as an image content block for visual analysis, alongside text metadata (dimensions and format). Requires Screen Recording permission — use mac_check_permissions to verify.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "windowId"
+      ],
+      "properties": {
+        "windowId": {
+          "description": "Window ID from mac_list_windows output",
+          "type": "number"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "jpeg",
+            "png"
+          ],
+          "description": "'jpeg' (default) or 'png'"
+        },
+        "quality": {
+          "description": "JPEG compression quality 0-1 (default: 0.8)",
+          "type": "number"
+        },
+        "retina": {
+          "description": "Capture at full pixel resolution (default: false)",
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  {
+    "name": "mac_read",
+    "description": "Read one or more accessibility attributes from a UI element in a macOS application. Finds the first element matching the given criteria and reads the named attribute(s). AXValue subtypes (CGPoint, CGSize, CGRect, CFRange) are automatically unpacked to structured dicts. Use 'attribute' for a single attribute or 'attributes' for multiple. At least one search criterion is required.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "app"
+      ],
+      "properties": {
+        "app": {
+          "description": "Application name or bundle identifier",
+          "type": "string"
+        },
+        "attribute": {
+          "description": "Single attribute name to read (e.g. 'AXValue', 'AXPosition', 'AXRole')",
+          "type": "string"
+        },
+        "attributes": {
+          "description": "Multiple attribute names to read",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "role": {
+          "description": "AX role (e.g. 'AXButton', 'AXTextArea')",
+          "type": "string"
+        },
+        "title": {
+          "description": "AX title to match",
+          "type": "string"
+        },
+        "value": {
+          "description": "AX value to match",
+          "type": "string"
+        },
+        "identifier": {
+          "description": "AX identifier to match",
+          "type": "string"
+        },
+        "matchType": {
+          "description": "'exact' (default) or 'contains'",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "mcp_servers",
+    "description": "List all available MCP servers configured in project files (.mcp.json, .gsd/mcp.json). Shows server names, transport type, and connection status. Use mcp_discover to get full tool schemas for a server.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "refresh": {
+          "description": "Force refresh the server list (default: use cache)",
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  {
+    "name": "mcp_discover",
+    "description": "Get detailed tool signatures and JSON schemas for a specific MCP server. Connects to the server on first call (lazy connection). Use this to understand what tools a server provides and what arguments they accept before calling them with mcp_call.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "server"
+      ],
+      "properties": {
+        "server": {
+          "description": "MCP server name (from mcp_servers output), e.g. 'railway', 'twitter-mcp', 'linear'",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "mcp_call",
+    "description": "Call a tool on an MCP server. Provide the server name, tool name, and arguments. Connects to the server on first call (lazy connection). Use mcp_discover first to see available tools and their required arguments.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "server",
+        "tool"
+      ],
+      "properties": {
+        "server": {
+          "description": "MCP server name, e.g. 'railway', 'twitter-mcp'",
+          "type": "string"
+        },
+        "tool": {
+          "description": "Tool name on that server, e.g. 'railway_list_projects'",
+          "type": "string"
+        },
+        "args": {
+          "additionalProperties": true,
+          "description": "Tool arguments as key-value pairs matching the tool's input schema",
+          "type": "object",
+          "properties": {}
+        }
+      }
+    }
+  },
+  {
+    "name": "subagent",
+    "description": "Delegate tasks to specialized subagents with isolated context windows. Each subagent is a separate pi process with its own tools, model, and system prompt. Modes: single ({ agent, task }), parallel ({ tasks: [{agent, task},...] }), chain ({ chain: [{agent, task},...] } with {previous} placeholder). Agents are defined as .md files in ~/.gsd/agent/agents/ (user) or .gsd/agents/ (project). Use the /subagent command to list available agents and their descriptions. Use chain mode to pipeline: scout finds context, planner designs, worker implements.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "description": "Name of the agent to invoke (for single mode)",
+          "type": "string"
+        },
+        "task": {
+          "description": "Task to delegate (for single mode)",
+          "type": "string"
+        },
+        "tasks": {
+          "description": "Array of {agent, task} for parallel execution",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "agent",
+              "task"
+            ],
+            "properties": {
+              "agent": {
+                "description": "Name of the agent to invoke",
+                "type": "string"
+              },
+              "task": {
+                "description": "Task to delegate to the agent",
+                "type": "string"
+              },
+              "cwd": {
+                "description": "Working directory for the agent process",
+                "type": "string"
+              }
+            }
+          }
+        },
+        "chain": {
+          "description": "Array of {agent, task} for sequential execution",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "agent",
+              "task"
+            ],
+            "properties": {
+              "agent": {
+                "description": "Name of the agent to invoke",
+                "type": "string"
+              },
+              "task": {
+                "description": "Task with optional {previous} placeholder for prior output",
+                "type": "string"
+              },
+              "cwd": {
+                "description": "Working directory for the agent process",
+                "type": "string"
+              }
+            }
+          }
+        },
+        "agentScope": {
+          "type": "string",
+          "enum": [
+            "user",
+            "project",
+            "both"
+          ],
+          "description": "Which agent directories to use. Default: \"both\" (user + project-local).",
+          "default": "both"
+        },
+        "confirmProjectAgents": {
+          "description": "Prompt before running project-local agents. Default: false.",
+          "default": false,
+          "type": "boolean"
+        },
+        "cwd": {
+          "description": "Working directory for the agent process (single mode)",
+          "type": "string"
+        },
+        "isolated": {
+          "description": "Run the subagent in an isolated filesystem (git worktree). Changes are captured as patches and merged back. Only available when taskIsolation.mode is configured in settings.",
+          "default": false,
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  {
+    "name": "discover_configs",
+    "description": "Scan for existing AI coding tool configurations in this project and the user's home directory. Discovers MCP servers, rules, context files, settings, Claude skills, and Claude plugins from Claude Code, Cursor, Windsurf, Gemini CLI, Codex, Cline, GitHub Copilot, and VS Code. Read-only — never modifies config files.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tool": {
+          "description": "Filter to a specific tool: claude, cursor, windsurf, gemini, codex, cline, github-copilot, vscode. Omit to scan all.",
+          "type": "string"
+        },
+        "refresh": {
+          "description": "Force re-scan even if cached results exist. Default: false.",
+          "type": "boolean"
+        }
+      }
+    }
+  }
+]

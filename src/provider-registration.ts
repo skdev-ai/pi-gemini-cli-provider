@@ -180,9 +180,11 @@ export async function registerGeminiProvider(
     getAllTools(): any[];
     on(event: string, handler: Function): void;
     registerProvider(id: string, config: {
+      api: string;
+      baseUrl: string;
+      apiKey: string;
       models: ProviderModel[];
       streamSimple: Function;
-      api?: unknown;
     }): void;
   }
 ): Promise<ProviderRegistrationResult> {
@@ -212,7 +214,13 @@ export async function registerGeminiProvider(
   const { streamSimple } = await import('./stream-simple.js');
 
   // Register the provider with GSD
+  // GSD's ModelRegistry.validateProviderConfig() requires api, baseUrl, and apiKey when streamSimple is set
+  // baseUrl: A2A server endpoint (local process)
+  // apiKey: Dummy value required by validation (our streamSimple doesn't use it - A2A server has no API key auth)
   pi.registerProvider(providerId, {
+    api: 'gemini-a2a',
+    baseUrl: 'http://localhost:41242',
+    apiKey: 'local',
     models,
     streamSimple,
   });

@@ -83,7 +83,10 @@ const sampleTools = [
 ];
 
 describe('extension load behavior', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Reset modules to ensure clean state and fresh env var reading
+    vi.resetModules();
+    
     // Set unique schema path for this test file to avoid race conditions
     process.env.PI_GEMINI_SCHEMA_PATH = schemaFilePath;
     

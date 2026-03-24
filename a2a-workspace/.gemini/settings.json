@@ -1,5 +1,3 @@
-// WARNING: excludeTools is a denylist. New tools added by Google in future versions will be auto-approved.
-// Version pinning to v0.34.0 is the safety net.
 {
   "excludeTools": [
     "replace",

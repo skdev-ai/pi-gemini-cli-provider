@@ -1,16 +1,11 @@
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { getA2APath, getA2APackageRoot } from './a2a-path.js';
 import { checkA2AInstalled, checkA2APatched, checkA2AInjectResultPatched } from './availability.js';
 import { applyInjectResultPatch } from './inject-result-patch.js';
-
-// Resolve extension directory from import.meta.url (works with ES modules)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const EXT_DIR = join(__dirname, '..'); // Go up from src/ to extension root
+import { generateWorkspace } from './workspace-generator.js';
 
 /**
  * Custom error class for A2A installation failures.
@@ -37,47 +32,6 @@ export interface InstallerContext {
     notify: (message: string) => void;
     confirm: (message: string, options?: { title?: string; detail?: string }) => Promise<boolean>;
   };
-}
-
-/**
- * Provider workspace settings for A2A server.
- * Excludes all tools except google_web_search as of v0.34.0.
- * Includes MCP discovery server configuration for pi-gemini-cli-provider.
- */
-const PROVIDER_WORKSPACE_SETTINGS = {
-  excludeTools: [
-    'replace',
-    'glob',
-    'codebase_investigator',
-    'enter_plan_mode',
-    'exit_plan_mode',
-    'generalist',
-    'read_file',
-    'list_directory',
-    'save_memory',
-    'grep_search',
-    'run_shell_command',
-    'web_fetch',
-    'write_file',
-    'activate_skill',
-    'ask_user',
-    'cli_help'
-  ],
-  folderTrust: true,
-  mcpServers: {
-    'pi-gemini-cli-provider': {
-      command: 'node',
-      args: [join(EXT_DIR, 'dist', 'mcp-bridge-server.js')],
-    }
-  }
-};
-
-/**
- * Path to the provider workspace settings file.
- * Located at ~/.pi/agent/extensions/pi-gemini-cli-provider/a2a-workspace/.gemini/settings.json
- */
-function getProviderWorkspaceSettingsPath(): string {
-  return join(homedir(), '.pi', 'agent', 'extensions', 'pi-gemini-cli-provider', 'a2a-workspace', '.gemini', 'settings.json');
 }
 
 /**
@@ -122,22 +76,28 @@ function preCheck(ctx: InstallerContext): boolean {
   const a2aPath = getA2APath();
   
   if (isInstalled && a2aPath) {
-    const hasPatch2 = checkA2APatched(a2aPath);
-    const hasPatch3 = checkA2AInjectResultPatched();
-    
-    if (hasPatch2 && hasPatch3) {
-      ctx.ui.notify('A2A already installed and patched with Patch 2 and Patch 3');
-      return false; // Signal that installation should skip (idempotent)
-    }
-    
-    if (hasPatch2 && !hasPatch3) {
-      ctx.ui.notify('A2A installed with Patch 2, applying Patch 3 (inject_result)...');
-      return true; // Proceed to apply Patch 3 only
-    }
-    
-    if (!hasPatch2) {
-      ctx.ui.notify('A2A installed but missing required patches, re-applying...');
-      return true; // Proceed to apply both patches
+    try {
+      const content = readFileSync(a2aPath, 'utf-8');
+      const hasPatch1 = content.includes('isHeadlessMode(options) { return false;');
+      const hasPatch2 = checkA2APatched(a2aPath);
+      const hasPatch3 = checkA2AInjectResultPatched();
+      
+      if (hasPatch1 && hasPatch2 && hasPatch3) {
+        ctx.ui.notify('A2A already installed and patched with all 3 patches');
+        return false; // Signal that installation should skip (idempotent)
+      }
+      
+      const missingPatches = [];
+      if (!hasPatch1) missingPatches.push('Patch 1 (headless)');
+      if (!hasPatch2) missingPatches.push('Patch 2 (_model)');
+      if (!hasPatch3) missingPatches.push('Patch 3 (inject_result)');
+      
+      ctx.ui.notify(`A2A installed but missing: ${missingPatches.join(', ')}, re-applying...`);
+      return true; // Proceed to apply missing patches
+    } catch (error) {
+      // If we can't read the file, proceed with installation
+      ctx.ui.notify('A2A installed but unable to verify patches, re-applying...');
+      return true;
     }
   }
   
@@ -162,7 +122,10 @@ async function requestApproval(ctx: InstallerContext): Promise<boolean> {
     'Requires Google OAuth authentication\n' +
     'Version pinned for stability — do not update without re-patching\n' +
     'Creates restricted workspace allowing only google_web_search tool\n' +
-    'Applies Patch 2 (_model per-request override) and Patch 3 (inject_result support)';
+    'Applies 3 patches:\n' +
+    '  • Patch 1: Headless mode fix (run without interactive terminal)\n' +
+    '  • Patch 2: _model per-request model override\n' +
+    '  • Patch 3: inject_result support for tool result reinjection';
   
   const approved = await ctx.ui.confirm(message, {
     title: 'Install A2A Server',
@@ -234,21 +197,9 @@ function installA2ABinary(ctx: InstallerContext): void {
  * @throws Error if workspace creation fails
  */
 function createProviderWorkspace(ctx: InstallerContext): void {
-  const settingsPath = getProviderWorkspaceSettingsPath();
-  const settingsDir = dirname(settingsPath);
-  
   try {
-    // Create directory structure
-    mkdirSync(settingsDir, { recursive: true });
-    
-    // Write settings.json with comment header
-    const settingsContent = `// WARNING: excludeTools is a denylist. New tools added by Google in future versions will be auto-approved.
-// Version pinning to v0.34.0 is the safety net.
-${JSON.stringify(PROVIDER_WORKSPACE_SETTINGS, null, 2)}
-`;
-    
-    writeFileSync(settingsPath, settingsContent, 'utf-8');
-    ctx.ui.notify('Provider workspace created at ' + settingsPath);
+    const result = generateWorkspace();
+    ctx.ui.notify('Provider workspace created at ' + result.settingsPath);
   } catch (error: any) {
     const errorMessage = error.message || String(error);
     throw new A2AInstallationError(
@@ -312,6 +263,19 @@ function applyPatches(ctx: InstallerContext): void {
     writeFileSync(a2aPath + '.bak', content, 'utf-8');
     writeFileSync(a2aPath + '.bak.version', '0.34.0', 'utf-8');
     
+    // Patch 1: Headless fix - forces isHeadlessMode to return false
+    // Required for A2A server to run without an interactive terminal
+    // Note: This patch is applied by the search extension installer as well.
+    // We re-apply it here to ensure the provider has a standalone installer.
+    const headlessPattern = 'function isHeadlessMode(options) {';
+    if (!content.includes(headlessPattern)) {
+      throw new Error('Patch target not found: isHeadlessMode function');
+    }
+    content = content.replace(
+      headlessPattern,
+      'function isHeadlessMode(options) { return false;'
+    );
+    
     // Patch 2: _requestedModel injection
     // Find the line after which to inject the model selection code
     const injectionTarget = 'const currentTask = wrapper.task;';
@@ -327,7 +291,11 @@ function applyPatches(ctx: InstallerContext): void {
       injectionTarget + modelSelectionCode
     );
     
-    // Patch 3: inject_result support
+    // Write Patch 2 to disk before applying Patch 3
+    // applyInjectResultPatch() reads from disk independently, so Patch 2 must be persisted first
+    writeFileSync(a2aPath, content, 'utf-8');
+    
+    // Patch 3: inject_result support (reads from disk, applies atomically)
     const injectResultApplied = applyInjectResultPatch(a2aPath);
     if (!injectResultApplied) {
       throw new Error('Failed to apply inject_result patch');
@@ -389,6 +357,19 @@ function verifyPatches(ctx: InstallerContext): void {
   
   try {
     const content = readFileSync(a2aPath, 'utf-8');
+    
+    // Verify Patch 1: Headless fix
+    if (!content.includes('isHeadlessMode(options) { return false;')) {
+      // Restore backup
+      if (existsSync(a2aPath + '.bak')) {
+        const backupContent = readFileSync(a2aPath + '.bak', 'utf-8');
+        writeFileSync(a2aPath, backupContent, 'utf-8');
+      }
+      if (existsSync(a2aPath + '.bak.version')) {
+        rmSync(a2aPath + '.bak.version');
+      }
+      throw new Error('Patch verification failed: headless fix not applied');
+    }
     
     // Verify Patch 2
     if (!content.includes('_requestedModel')) {

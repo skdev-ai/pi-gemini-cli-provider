@@ -247,3 +247,31 @@ export function extractErrorMessage(result: A2AResult): string | undefined {
   // Fall back to state description
   return `Task ${result.status?.state}`;
 }
+
+/**
+ * Detects if an SSE result contains an invalid-model error.
+ * 
+ * Checks metadata.error field for "not found" errors that indicate
+ * an invalid model ID was requested. This allows the provider to
+ * surface model validation errors explicitly rather than treating
+ * them as normal assistant text.
+ * 
+ * @param result - A2AResult to check
+ * @returns True if the error indicates an invalid model
+ */
+export function isInvalidModelError(result: A2AResult): boolean {
+  const metadata = result.metadata;
+  if (!metadata || typeof metadata !== 'object') {
+    return false;
+  }
+
+  const metadataObj = metadata as Record<string, unknown>;
+  const error = metadataObj.error;
+
+  if (typeof error !== 'string') {
+    return false;
+  }
+
+  // Detect "not found" errors that indicate invalid model
+  return error.toLowerCase().includes('not found');
+}

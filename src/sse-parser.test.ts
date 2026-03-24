@@ -14,6 +14,7 @@ import {
   isAwaitingApproval,
   isTerminalState,
   extractErrorMessage,
+  isInvalidModelError,
 } from './sse-parser.js';
 import type { A2AResult } from './types.js';
 
@@ -463,5 +464,103 @@ describe('extractErrorMessage', () => {
     };
     const error = extractErrorMessage(failedNoMessage);
     expect(error).toBe('Task failed');
+  });
+});
+
+describe('isInvalidModelError', () => {
+  it('should return true for "not found" error in metadata', () => {
+    const invalidModelEvent = {
+      metadata: {
+        coderAgent: { kind: 'text-content' as const },
+        error: 'Model gemini-invalid-model not found',
+      },
+      status: {
+        state: 'failed',
+        message: {
+          parts: [{ kind: 'text', text: 'Invalid model' }],
+        },
+      },
+      final: true,
+    } as A2AResult;
+
+    expect(isInvalidModelError(invalidModelEvent)).toBe(true);
+  });
+
+  it('should return true for case-insensitive "not found" error', () => {
+    const invalidModelEvent = {
+      metadata: {
+        coderAgent: { kind: 'text-content' as const },
+        error: 'MODEL NOT FOUND',
+      },
+      status: {
+        state: 'failed',
+        message: { parts: [] },
+      },
+      final: true,
+    } as A2AResult;
+
+    expect(isInvalidModelError(invalidModelEvent)).toBe(true);
+  });
+
+  it('should return false for other error types', () => {
+    const authErrorEvent = {
+      metadata: {
+        coderAgent: { kind: 'text-content' as const },
+        error: 'Authentication failed',
+      },
+      status: {
+        state: 'failed',
+        message: { parts: [] },
+      },
+      final: true,
+    } as A2AResult;
+
+    expect(isInvalidModelError(authErrorEvent)).toBe(false);
+  });
+
+  it('should return false if metadata has no error field', () => {
+    expect(isInvalidModelError(textContentEvent)).toBe(false);
+  });
+
+  it('should return false if metadata is missing', () => {
+    const noMetadataEvent: A2AResult = {
+      status: {
+        state: 'failed',
+        message: { parts: [] },
+      },
+      final: true,
+    };
+
+    expect(isInvalidModelError(noMetadataEvent)).toBe(false);
+  });
+
+  it('should return false if error is not a string', () => {
+    const invalidErrorEvent = {
+      metadata: {
+        coderAgent: { kind: 'text-content' as const },
+        error: 123,
+      },
+      status: {
+        state: 'failed',
+        message: { parts: [] },
+      },
+      final: true,
+    } as A2AResult;
+
+    expect(isInvalidModelError(invalidErrorEvent)).toBe(false);
+  });
+
+  it('should return false for empty metadata', () => {
+    const emptyMetadataEvent: A2AResult = {
+      metadata: {
+        coderAgent: { kind: 'text-content' },
+      },
+      status: {
+        state: 'working',
+        message: { parts: [] },
+      },
+    };
+
+    expect(isInvalidModelError(emptyMetadataEvent)).toBe(false);
   });
 });

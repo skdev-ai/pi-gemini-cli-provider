@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
-import { streamSimple } from './stream-simple.js';
+import { streamSimple, type AssistantMessageEvent } from './stream-simple.js';
 import {
   startServer,
   stopServer,
@@ -77,6 +77,14 @@ async function waitForCondition(
   }
   
   return false;
+}
+
+async function collectEvents(stream: AsyncIterable<AssistantMessageEvent>): Promise<AssistantMessageEvent[]> {
+  const events: AssistantMessageEvent[] = [];
+  for await (const event of stream) {
+    events.push(event);
+  }
+  return events;
 }
 
 describeLive('Live Integration', () => {
@@ -158,15 +166,8 @@ describeLive('Live Integration', () => {
       });
       
       // Capture events from the stream
-      const events: any[] = [];
-      const toolCalls: any[] = [];
-      
-      stream.onEvent?.((event) => {
-        events.push(event);
-        if (event.type === 'toolCall' || event.type === 'tool_call') {
-          toolCalls.push(event);
-        }
-      });
+      const events = await collectEvents(stream);
+      const toolCalls = events.filter((event) => event.type === 'toolcall_start');
       
       // Wait for result to complete
       const finalResult = await result;
@@ -183,11 +184,16 @@ describeLive('Live Integration', () => {
       // Assert: At least one tool call was detected
       expect(toolCalls.length).toBeGreaterThan(0);
       
-      // Assert: Tool calls have valid structure
+      // Assert: Tool calls have valid structure via the partial snapshot
       toolCalls.forEach(tc => {
-        expect(tc.callId).toBeDefined();
-        expect(tc.name).toBeDefined();
-        expect(tc.args).toBeDefined();
+        const content = tc.partial.content[tc.contentIndex];
+        expect(content).toBeDefined();
+        expect(content?.type).toBe('toolCall');
+        if (content?.type === 'toolCall') {
+          expect(content.callId).toBeDefined();
+          expect(content.toolName).toBeDefined();
+          expect(content.args).toBeDefined();
+        }
       });
       
       // Assert: Task state shows awaiting approval
@@ -253,17 +259,12 @@ describeLive('Live Integration', () => {
       });
       
       // Capture continuation events
-      const continuationEvents: any[] = [];
-      let hasTextContent = false;
-      
-      stream2.onEvent?.((event) => {
-        continuationEvents.push(event);
-        if (event.type === 'text_delta' && event.delta) {
-          hasTextContent = true;
-        } else if (event.type === 'text' && event.content) {
-          hasTextContent = true;
-        }
-      });
+      const continuationEvents = await collectEvents(stream2);
+      const hasTextContent = continuationEvents.some(
+        (event) =>
+          (event.type === 'text_delta' && event.delta.length > 0) ||
+          (event.type === 'text_end' && event.content.length > 0)
+      );
       
       const finalResult2 = await result2;
       
@@ -426,10 +427,8 @@ describeLive('Live Integration', () => {
         model: invalidModel,
       });
       
-      // Capture any error events
-      stream.onError?.(() => {
-        // Error captured
-      });
+      // Capture any terminal error events
+      await collectEvents(stream);
       
       // Wait for result - it may resolve or reject depending on how A2A handles invalid models
       try {

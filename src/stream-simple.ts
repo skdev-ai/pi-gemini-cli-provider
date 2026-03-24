@@ -1,15 +1,10 @@
 /**
  * Stream Simple Module
- * 
+ *
  * Implements the streamSimple orchestration for the Gemini A2A provider.
- * Returns a pi AssistantMessageEventStream that is populated asynchronously
- * from A2A SSE events, with approval interception and result reinjection.
- * 
- * Key behaviors:
- * - Fresh prompts: Stream A2A output until terminal completion or approval interception
- * - MCP approvals: Emit prefix-stripped toolCall blocks, end with stopReason: 'toolUse'
- * - Native approvals: Continue inline without returning control to GSD
- * - Re-calls: Detect toolResult messages, inject results, continue streaming
+ * Returns a pi-compatible AssistantMessageEventStream that is populated
+ * asynchronously from A2A SSE events, with approval interception and result
+ * reinjection.
  */
 
 import type { Context } from './pi-types.js';
@@ -24,10 +19,7 @@ import {
   clearPendingToolCalls,
   markTaskFailed,
 } from './task-manager.js';
-import {
-  detectReCall,
-  extractAllToolResults,
-} from './result-extractor.js';
+import { detectReCall, extractAllToolResults } from './result-extractor.js';
 import {
   classifyToolRouting,
   buildReinjectionWorkList,
@@ -39,78 +31,181 @@ import {
   translateEvents,
 } from './event-bridge.js';
 import { incrementProviderTaskCount } from './a2a-lifecycle.js';
+import type { PiToolCallContent } from './types.js';
 
 // =============================================================================
-// Pi Stream Type (local definition since 'pi' module not available at build time)
+// Pi stream contract types
 // =============================================================================
 
-/**
- * Pi AssistantMessageEventStream interface.
- * Matches GSD's actual AssistantMessageEventStream contract.
- * Uses push() with event objects instead of sendText/sendThinking/etc.
- */
-export interface AssistantMessageEventStream {
-  /** Push an event to the stream */
-  push(event: AssistantMessageEvent): void;
-  /** Signal an error */
-  error(err: Error): void;
-  /** Signal completion */
-  complete(): void;
-  /** End the stream */
-  end?(): void;
-  /** Register event listener (for testing) */
-  onEvent?(listener: (event: AssistantMessageEvent) => void): () => void;
-  /** Register error listener (for testing) */
-  onError?(listener: (error: Error) => void): () => void;
-  /** Register complete listener (for testing) */
-  onComplete?(listener: () => void): () => void;
+export interface AssistantMessageTextContent {
+  type: 'text';
+  text: string;
 }
 
-/**
- * Assistant message event types compatible with GSD's contract.
- */
+export interface AssistantMessageThinkingContent {
+  type: 'thinking';
+  thinking: string;
+}
+
+export interface AssistantMessageToolCallContent {
+  type: 'toolCall';
+  callId: string;
+  toolName: string;
+  args: unknown;
+}
+
+export type AssistantMessageContent =
+  | AssistantMessageTextContent
+  | AssistantMessageThinkingContent
+  | AssistantMessageToolCallContent;
+
+export interface AssistantMessage {
+  role: 'assistant';
+  content: AssistantMessageContent[];
+  stopReason?: 'stop' | 'toolUse' | 'length' | 'error' | 'aborted';
+  errorMessage?: string;
+}
+
 export type AssistantMessageEvent =
-  | { type: 'text_delta'; delta: string; partial?: boolean }
-  | { type: 'thinking_delta'; delta: string; partial?: boolean }
-  | { type: 'tool_call'; callId: string; name: string; args: unknown }
-  | { type: 'tool_call_delta'; callId: string; nameDelta?: string; argsDelta?: unknown }
-  | { type: 'text'; content: string }
-  | { type: 'thinking'; content: string }
-  | { type: 'toolCall'; callId: string; name: string; args: unknown };
+  | { type: 'start'; partial: AssistantMessage }
+  | { type: 'text_start'; contentIndex: number; partial: AssistantMessage }
+  | { type: 'text_delta'; contentIndex: number; delta: string; partial: AssistantMessage }
+  | { type: 'text_end'; contentIndex: number; content: string; partial: AssistantMessage }
+  | { type: 'thinking_start'; contentIndex: number; partial: AssistantMessage }
+  | { type: 'thinking_delta'; contentIndex: number; delta: string; partial: AssistantMessage }
+  | { type: 'thinking_end'; contentIndex: number; content: string; partial: AssistantMessage }
+  | { type: 'toolcall_start'; contentIndex: number; partial: AssistantMessage }
+  | { type: 'done'; reason: 'stop' | 'toolUse' | 'length'; message: AssistantMessage }
+  | { type: 'error'; reason: 'error' | 'aborted'; error: AssistantMessage };
+
+export interface AssistantMessageEventStream extends AsyncIterable<AssistantMessageEvent> {
+  push(event: AssistantMessageEvent): void;
+  end(result?: AssistantMessage): void;
+  result(): Promise<AssistantMessage>;
+}
+
+class LocalAssistantMessageEventStream implements AssistantMessageEventStream {
+  private queue: AssistantMessageEvent[] = [];
+  private waiters: Array<(value: IteratorResult<AssistantMessageEvent>) => void> = [];
+  private isEnded = false;
+  private resultValue: AssistantMessage | undefined;
+  private resultPromise: Promise<AssistantMessage>;
+  private resolveResult!: (value: AssistantMessage) => void;
+  private rejectResult!: (reason?: unknown) => void;
+
+  constructor() {
+    this.resultPromise = new Promise<AssistantMessage>((resolve, reject) => {
+      this.resolveResult = resolve;
+      this.rejectResult = reject;
+    });
+  }
+
+  push(event: AssistantMessageEvent): void {
+    if (this.isEnded) {
+      return;
+    }
+
+    if (event.type === 'done') {
+      this.resultValue = event.message;
+      this.deliver(event);
+      this.end(event.message);
+      return;
+    }
+
+    if (event.type === 'error') {
+      this.resultValue = event.error;
+      this.deliver(event);
+      this.isEnded = true;
+      this.resolvePendingDone();
+      this.resolveResult(event.error);
+      return;
+    }
+
+    this.deliver(event);
+  }
+
+  end(result?: AssistantMessage): void {
+    if (this.isEnded) {
+      return;
+    }
+
+    this.isEnded = true;
+    if (result) {
+      this.resultValue = result;
+      this.resolveResult(result);
+    } else if (this.resultValue) {
+      this.resolveResult(this.resultValue);
+    } else {
+      this.rejectResult(new Error('Stream ended without a terminal assistant message'));
+    }
+    this.resolvePendingDone();
+  }
+
+  result(): Promise<AssistantMessage> {
+    return this.resultPromise;
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
+    while (true) {
+      if (this.queue.length > 0) {
+        yield this.queue.shift()!;
+        continue;
+      }
+
+      if (this.isEnded) {
+        return;
+      }
+
+      const next = await new Promise<IteratorResult<AssistantMessageEvent>>((resolve) => {
+        this.waiters.push(resolve);
+      });
+
+      if (next.done) {
+        return;
+      }
+
+      yield next.value;
+    }
+  }
+
+  private deliver(event: AssistantMessageEvent): void {
+    const waiter = this.waiters.shift();
+    if (waiter) {
+      waiter({ value: event, done: false });
+      return;
+    }
+    this.queue.push(event);
+  }
+
+  private resolvePendingDone(): void {
+    while (this.waiters.length > 0) {
+      const waiter = this.waiters.shift()!;
+      waiter({ value: undefined as never, done: true });
+    }
+  }
+}
+
+function createAssistantMessageEventStream(): AssistantMessageEventStream {
+  return new LocalAssistantMessageEventStream();
+}
 
 // =============================================================================
-// Types
+// Result types
 // =============================================================================
 
-/**
- * Parameters for streamSimple operation.
- */
 export interface StreamSimpleParams {
-  /** User prompt text */
   prompt: string;
-  /** Pi context with message history */
   context: Context;
-  /** Optional existing task ID for multi-turn */
   taskId?: string;
-  /** Optional context ID for conversation continuity */
   contextId?: string;
-  /** Optional model override */
   model?: string;
-  /** Optional abort signal */
   signal?: AbortSignal;
 }
 
-/**
- * Result from streamSimple operation.
- */
 export interface StreamSimpleResult {
-  /** Task ID for this conversation */
   taskId: string;
-  /** Context ID for multi-turn continuity */
   contextId: string;
-  /** Stop reason (toolUse for MCP approvals, undefined otherwise) */
   stopReason?: string;
-  /** Final assistant message content */
   message: {
     text: string;
     thinking: string;
@@ -118,98 +213,6 @@ export interface StreamSimpleResult {
   };
 }
 
-// =============================================================================
-// Main Entry Point - SYNCHRONOUS (GSD-compatible)
-// =============================================================================
-
-/**
- * Implements the streamSimple orchestration for Gemini A2A provider.
- * 
- * CRITICAL: This function is SYNCHRONOUS and returns the stream immediately.
- * Async work happens in a fire-and-forget IIFE that populates the stream.
- * 
- * Pattern matches custom-provider-anthropic:
- * 1. Create stream
- * 2. Start async IIFE that populates stream via push()
- * 3. Return stream immediately (don't await, don't wrap in Promise)
- * 
- * @param params - Stream parameters
- * @returns AssistantMessageEventStream (synchronous return)
- */
-export function streamSimple(params: StreamSimpleParams): {
-  stream: AssistantMessageEventStream;
-  result: Promise<StreamSimpleResult>;
-} {
-  const { prompt, context, taskId, contextId, model, signal } = params;
-  
-  // Step 1: Create the stream that will be returned immediately
-  const stream = createAssistantMessageEventStream();
-  
-  // Step 2: Create a promise for the result (tracked separately)
-  let resolveResult!: (value: StreamSimpleResult) => void;
-  let rejectResult!: (reason: Error) => void;
-  const resultPromise = new Promise<StreamSimpleResult>((resolve, reject) => {
-    resolveResult = resolve;
-    rejectResult = reject;
-  });
-  
-  // Step 3: Fire-and-forget async work that populates the stream
-  (async () => {
-    try {
-      // Increment provider task count for tracking and restart mitigation
-      await incrementProviderTaskCount();
-      
-      // Check if this is a re-call (tool results present)
-      const isReCall = detectReCall(context.messages);
-      
-      let result: StreamSimpleResult;
-      
-      if (isReCall) {
-        // Handle re-call: inject results and resume streaming
-        result = await handleReCall(stream, {
-          context,
-          taskId: taskId!,
-          contextId: contextId!,
-          model,
-          signal,
-        });
-      } else {
-        // Handle fresh prompt: start new task and stream
-        result = await handleFreshPrompt(stream, {
-          prompt,
-          context,
-          taskId,
-          contextId,
-          model,
-          signal,
-        });
-      }
-      
-      // Resolve the result promise
-      resolveResult(result);
-    } catch (error) {
-      // Handle errors: emit error event and reject result promise
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      stream.error(new Error(errorMessage));
-      rejectResult(new Error(errorMessage));
-    }
-  })();
-  
-  // Step 4: Return immediately with stream and result promise
-  return {
-    stream,
-    result: resultPromise,
-  };
-}
-
-// =============================================================================
-// GSD-Compatible Export (correct signature)
-// =============================================================================
-
-/**
- * Minimal type definitions for GSD compatibility.
- * These match what GSD actually passes to streamSimple.
- */
 interface Model {
   id: string;
   provider?: string;
@@ -225,51 +228,93 @@ interface SimpleStreamOptions {
   apiKey?: string;
 }
 
-/**
- * GSD-compatible streamSimple wrapper.
- * 
- * Signature matches GSD's contract:
- *   streamSimple(model: Model, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream
- * 
- * Returns the stream synchronously (fire-and-forget pattern).
- * The async work happens in the background, populating the stream.
- * 
- * @param model - Model configuration (includes model.id for _model metadata)
- * @param context - Pi context with message history and tools
- * @param options - Optional stream options (signal, reasoning, etc.)
- * @returns AssistantMessageEventStream populated with pi events
- */
+interface StreamEventState {
+  emittedStart: boolean;
+  textIndex: number | null;
+  textEmitted: string;
+  thinkingIndex: number | null;
+  thinkingEmitted: string;
+  toolCallIndices: Map<string, number>;
+}
+
+// =============================================================================
+// Public entrypoints
+// =============================================================================
+
+export function streamSimple(params: StreamSimpleParams): {
+  stream: AssistantMessageEventStream;
+  result: Promise<StreamSimpleResult>;
+} {
+  const { prompt, context, taskId, contextId, model, signal } = params;
+  const stream = createAssistantMessageEventStream();
+
+  let resolveResult!: (value: StreamSimpleResult) => void;
+  let rejectResult!: (reason: Error) => void;
+  const resultPromise = new Promise<StreamSimpleResult>((resolve, reject) => {
+    resolveResult = resolve;
+    rejectResult = reject;
+  });
+
+  (async () => {
+    try {
+      await incrementProviderTaskCount();
+
+      const isReCall = detectReCall(context.messages);
+      const result = isReCall
+        ? await handleReCall(stream, {
+            context,
+            taskId: taskId!,
+            contextId: contextId!,
+            model,
+            signal,
+          })
+        : await handleFreshPrompt(stream, {
+            prompt,
+            context,
+            taskId,
+            contextId,
+            model,
+            signal,
+          });
+
+      const finalAssistantMessage = buildAssistantMessage(result.message, mapStopReason(result.stopReason));
+      emitDone(stream, finalAssistantMessage);
+      resolveResult(result);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      emitError(stream, errorMessage, signal?.aborted === true ? 'aborted' : 'error');
+      rejectResult(new Error(errorMessage));
+    }
+  })();
+
+  return { stream, result: resultPromise };
+}
+
 export function streamSimpleGsd(
   model: Model,
   context: Context,
   options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
-  // Extract what we need from model/context/options
   const lastMessage = context.messages[context.messages.length - 1];
-  const prompt = typeof lastMessage === 'object' && lastMessage && 'content' in lastMessage ? (lastMessage as any).content : '';
-  
-  // Call our internal implementation (returns synchronously now!)
+  const prompt =
+    typeof lastMessage === 'object' && lastMessage && 'content' in lastMessage
+      ? (lastMessage as any).content
+      : '';
+
   const { stream } = streamSimple({
     prompt,
     context,
     model: model.id,
     signal: options?.signal,
   });
-  
+
   return stream;
 }
 
 // =============================================================================
-// Fresh Prompt Handler
+// Fresh prompt flow
 // =============================================================================
 
-/**
- * Handles a fresh prompt (no tool results in context).
- * 
- * @param stream - AssistantMessageEventStream to populate
- * @param params - Handler parameters
- * @returns StreamSimpleResult with task metadata
- */
 async function handleFreshPrompt(
   stream: AssistantMessageEventStream,
   params: {
@@ -279,19 +324,12 @@ async function handleFreshPrompt(
     contextId?: string;
     model?: string;
     signal?: AbortSignal;
-  }
+  },
 ): Promise<StreamSimpleResult> {
   const { prompt, taskId, contextId, model, signal } = params;
-  
-  // Create or resume task
-  let taskState;
-  if (taskId && contextId) {
-    taskState = createTaskWithIds(taskId, contextId);
-  } else {
-    taskState = createTask();
-  }
-  
-  // Send message to A2A server
+
+  const taskState = taskId && contextId ? createTaskWithIds(taskId, contextId) : createTask();
+
   const { taskId: a2aTaskId, contextId: a2aContextId, sseStream } = await sendMessageStream({
     prompt,
     taskId: taskState.taskId,
@@ -299,54 +337,32 @@ async function handleFreshPrompt(
     model,
     signal,
   });
-  
-  // Consume SSE stream and populate pi stream
+
   const partialMessage = createPartialMessage();
+  const eventState = createStreamEventState();
   let stopReason: string | undefined;
-  
+
   for await (const event of parseSSEStream(sseStream, { signal })) {
-    // Update task state
     updateTaskState(a2aTaskId, event);
-    
-    // Update partial message accumulator
-    updatePartialMessage(partialMessage, event);
-    
-    // Translate and emit pi events (wrap single event in array)
-    const piEvents = translateEvents([event]);
-    for (const piEvent of piEvents) {
-      if (piEvent.type === 'text' && piEvent.content) {
-        stream.push({ type: "text_delta", delta: piEvent.content as string });
-      } else if (piEvent.type === 'thinking' && piEvent.content) {
-        stream.push({ type: "thinking_delta", delta: piEvent.content as string });
-      } else if (piEvent.type === 'toolCall') {
-        const toolCall = piEvent.content as any;
-        stream.push({ type: "tool_call", callId: toolCall.callId, name: toolCall.name, args: toolCall.args });
-      }
-    }
-    
-    // Check for approval state
+    const nextPartial = updatePartialMessage(partialMessage, event);
+    copyPartialMessage(partialMessage, nextPartial);
+    emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([event]));
+
     const updatedState = getTaskState(a2aTaskId);
     if (updatedState?.awaitingApproval) {
-      // Get pending tool calls
       const pendingToolCalls = getPendingToolCalls(a2aTaskId);
-      
+
       if (pendingToolCalls.length > 0) {
-        // Classify routing
         const routingDecisions = pendingToolCalls.map(classifyToolRouting);
-        const hasMcpCalls = routingDecisions.some(r => r.routing === 'mcp');
-        const hasNativeCalls = routingDecisions.some(r => r.routing === 'native');
-        
+        const hasMcpCalls = routingDecisions.some((r) => r.routing === 'mcp');
+        const hasNativeCalls = routingDecisions.some((r) => r.routing === 'native');
+
         if (hasMcpCalls) {
-          // MCP calls present - return control to GSD
           stopReason = 'toolUse';
           break;
         }
-        
+
         if (hasNativeCalls && !hasMcpCalls) {
-          // Only native calls - auto-approve by sending proceed_once outcome
-          // This tells the A2A server to execute the native tool and continue
-          
-          // Approve all native tool calls
           for (const toolCall of pendingToolCalls) {
             try {
               const { sseStream: approveStream } = await approveToolCall({
@@ -355,26 +371,13 @@ async function handleFreshPrompt(
                 outcome: 'proceed_once',
                 signal,
               });
-              
-              // Consume the approval response stream
-              // This contains the model's continued output after tool execution
+
               for await (const approveEvent of parseSSEStream(approveStream, { signal })) {
                 updateTaskState(a2aTaskId, approveEvent);
-                updatePartialMessage(partialMessage, approveEvent);
-                
-                const approvePiEvents = translateEvents([approveEvent]);
-                for (const piEvent of approvePiEvents) {
-                  if (piEvent.type === 'text' && piEvent.content) {
-                    stream.push({ type: "text_delta", delta: piEvent.content as string });
-                  } else if (piEvent.type === 'thinking' && piEvent.content) {
-                    stream.push({ type: "thinking_delta", delta: piEvent.content as string });
-                  } else if (piEvent.type === 'toolCall') {
-                    const toolCallEvent = piEvent.content as any;
-                    stream.push({ type: "tool_call", callId: toolCallEvent.callId, name: toolCallEvent.name, args: toolCallEvent.args });
-                  }
-                }
-                
-                // Check for terminal state or more approvals
+                const approvePartial = updatePartialMessage(partialMessage, approveEvent);
+                copyPartialMessage(partialMessage, approvePartial);
+                emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([approveEvent]));
+
                 const approvedState = getTaskState(a2aTaskId);
                 if (approvedState?.isTerminal) {
                   break;
@@ -386,33 +389,29 @@ async function handleFreshPrompt(
               throw new Error(`Failed to auto-approve native tool ${toolCall.callId}: ${errorMessage}`);
             }
           }
-          
-          // Clear the approved tool calls
-          clearPendingToolCalls(a2aTaskId, pendingToolCalls.map(tc => tc.callId));
-          
-          // Don't break - we've already consumed the resumed stream from approval
-          // Just continue to build final message
+
+          clearPendingToolCalls(a2aTaskId, pendingToolCalls.map((tc) => tc.callId));
         }
       }
     }
-    
-    // Check for terminal state
+
     if (updatedState?.isTerminal) {
       break;
     }
   }
-  
-  // Build final message (remove unused finalState)
+
   const finalMessage = {
     text: partialMessage.text,
     thinking: partialMessage.thinking,
-    toolCalls: partialMessage.toolCalls.map(call => ({
+    toolCalls: partialMessage.toolCalls.map((call) => ({
       callId: call.callId,
       name: call.name,
       args: call.args,
     })),
   };
-  
+
+  finalizeOpenContent(stream, eventState, finalMessage);
+
   return {
     taskId: a2aTaskId,
     contextId: a2aContextId,
@@ -422,19 +421,9 @@ async function handleFreshPrompt(
 }
 
 // =============================================================================
-// Re-call Handler
+// Re-call flow
 // =============================================================================
 
-/**
- * Handles a re-call (tool results present in context).
- * 
- * Detects toolResult messages, builds reinjection work list,
- * calls injectResult() for each completed tool, and resumes streaming.
- * 
- * @param stream - AssistantMessageEventStream to populate
- * @param params - Handler parameters
- * @returns StreamSimpleResult with task metadata
- */
 async function handleReCall(
   stream: AssistantMessageEventStream,
   params: {
@@ -443,40 +432,30 @@ async function handleReCall(
     contextId: string;
     model?: string;
     signal?: AbortSignal;
-  }
+  },
 ): Promise<StreamSimpleResult> {
   const { context, taskId, contextId, signal } = params;
-  
-  // Extract tool results from context.messages
+
   const extractedResults = extractAllToolResults(context.messages);
-  
   if (extractedResults.length === 0) {
     throw new Error('Re-call detected but no tool results found in context');
   }
-  
-  // Get pending tool calls from task state
+
   const pendingToolCalls = getPendingToolCalls(taskId);
-  
   if (pendingToolCalls.length === 0) {
     throw new Error('Re-call detected but task has no pending tool calls');
   }
-  
-  // Validate reinjection completeness
+
   const validation = validateReinjectionCompleteness(pendingToolCalls, extractedResults);
   if (!validation.isValid) {
-    throw new Error(
-      `Missing results for tool calls: ${validation.missingCallIds.join(', ')}`
-    );
+    throw new Error(`Missing results for tool calls: ${validation.missingCallIds.join(', ')}`);
   }
-  
-  // Build reinjection work list
+
   const workItems = buildReinjectionWorkList(pendingToolCalls, extractedResults);
-  
-  // Accumulator for the final message
   const partialMessage = createPartialMessage();
+  const eventState = createStreamEventState();
   let stopReason: string | undefined;
-  
-  // Inject results in order (preserving original tool call order)
+
   for (const item of workItems) {
     try {
       const { sseStream } = await injectResult({
@@ -486,70 +465,51 @@ async function handleReCall(
         functionResponse: item.result.response,
         signal,
       });
-      
-      // Consume the injection response stream
-      // This contains the model's continuation after result injection
+
       for await (const event of parseSSEStream(sseStream, { signal })) {
         updateTaskState(taskId, event);
-        updatePartialMessage(partialMessage, event);
-        
-        // Translate and emit any events from injection response (wrap single event in array)
-        const piEvents = translateEvents([event]);
-        for (const piEvent of piEvents) {
-          if (piEvent.type === 'text' && piEvent.content) {
-            stream.push({ type: "text_delta", delta: piEvent.content as string });
-          } else if (piEvent.type === 'thinking' && piEvent.content) {
-            stream.push({ type: "thinking_delta", delta: piEvent.content as string });
-          } else if (piEvent.type === 'toolCall') {
-            const toolCall = piEvent.content as any;
-            stream.push({ type: "tool_call", callId: toolCall.callId, name: toolCall.name, args: toolCall.args });
-          }
-        }
-        
-        // Check for approval state (may have more tool calls after continuation)
+        const nextPartial = updatePartialMessage(partialMessage, event);
+        copyPartialMessage(partialMessage, nextPartial);
+        emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([event]));
+
         const updatedState = getTaskState(taskId);
         if (updatedState?.awaitingApproval) {
           const morePendingCalls = getPendingToolCalls(taskId);
           if (morePendingCalls.length > 0) {
-            // More tool calls - return control to GSD
             stopReason = 'toolUse';
             break;
           }
         }
-        
-        // Check for terminal state
+
         if (updatedState?.isTerminal) {
           break;
         }
       }
-      
-      // If we hit stopReason or terminal state, break out of injection loop
+
       if (stopReason || getTaskState(taskId)?.isTerminal) {
         break;
       }
     } catch (error) {
-      // Injection failed - mark task as failed
       const errorMessage = error instanceof Error ? error.message : 'Result injection failed';
       markTaskFailed(taskId, errorMessage);
       throw new Error(`Failed to inject result for ${item.callId}: ${errorMessage}`);
     }
   }
-  
-  // Clear satisfied pending calls from task state
-  const injectedCallIds = workItems.map(item => item.callId);
-  clearPendingToolCalls(taskId, injectedCallIds);
-  
-  // Build final message from accumulated partialMessage
+
+  clearPendingToolCalls(taskId, workItems.map((item) => item.callId));
+
   const finalMessage = {
     text: partialMessage.text,
     thinking: partialMessage.thinking,
-    toolCalls: partialMessage.toolCalls.map(call => ({
+    toolCalls: partialMessage.toolCalls.map((call) => ({
       callId: call.callId,
       name: call.name,
       args: call.args,
     })),
   };
-  
+
+  finalizeOpenContent(stream, eventState, finalMessage);
+
   return {
     taskId,
     contextId,
@@ -559,73 +519,286 @@ async function handleReCall(
 }
 
 // =============================================================================
-// Stream Creation Helper
+// Event helpers
 // =============================================================================
 
-/**
- * Creates a pi AssistantMessageEventStream with proper error handling.
- * 
- * Implements the async-population pattern: return stream immediately,
- * populate it from an async worker, and guard against double completion.
- * 
- * @returns AssistantMessageEventStream ready for population
- */
-function createAssistantMessageEventStream(): AssistantMessageEventStream {
-  const eventListeners: ((event: AssistantMessageEvent) => void)[] = [];
-  const errorListeners: ((error: Error) => void)[] = [];
-  const completeListeners: (() => void)[] = [];
-  
-  let completed = false;
-  let errored = false;
-  
-  const stream: AssistantMessageEventStream = {
-    push(event: AssistantMessageEvent) {
-      if (completed || errored) return;
-      eventListeners.forEach(listener => listener(event));
-    },
-    
-    error(err: Error) {
-      if (completed || errored) return;
-      errored = true;
-      errorListeners.forEach(listener => listener(err));
-    },
-    
-    complete() {
-      if (completed || errored) return;
-      completed = true;
-      completeListeners.forEach(listener => listener());
-    },
-    
-    end() {
-      if (completed || errored) return;
-      completed = true;
-      completeListeners.forEach(listener => listener());
-    },
-    
-    onEvent(listener: (event: AssistantMessageEvent) => void) {
-      eventListeners.push(listener);
-      return () => {
-        const index = eventListeners.indexOf(listener);
-        if (index > -1) eventListeners.splice(index, 1);
-      };
-    },
-    
-    onError(listener: (error: Error) => void) {
-      errorListeners.push(listener);
-      return () => {
-        const index = errorListeners.indexOf(listener);
-        if (index > -1) errorListeners.splice(index, 1);
-      };
-    },
-    
-    onComplete(listener: () => void) {
-      completeListeners.push(listener);
-      return () => {
-        const index = completeListeners.indexOf(listener);
-        if (index > -1) completeListeners.splice(index, 1);
-      };
-    },
+function createStreamEventState(): StreamEventState {
+  return {
+    emittedStart: false,
+    textIndex: null,
+    textEmitted: '',
+    thinkingIndex: null,
+    thinkingEmitted: '',
+    toolCallIndices: new Map<string, number>(),
   };
-  
-  return stream;
+}
+
+function emitTranslatedEvents(
+  stream: AssistantMessageEventStream,
+  state: StreamEventState,
+  partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
+  piEvents: Array<{ type: 'text' | 'thinking' | 'toolCall'; content: string | PiToolCallContent }>,
+): void {
+  ensureStartEvent(stream, state, partialMessage);
+
+  for (const piEvent of piEvents) {
+    if (piEvent.type === 'text') {
+      emitTextDelta(stream, state, partialMessage, piEvent.content as string);
+    } else if (piEvent.type === 'thinking') {
+      emitThinkingDelta(stream, state, partialMessage, piEvent.content as string);
+    } else if (piEvent.type === 'toolCall') {
+      emitToolCall(stream, state, partialMessage, piEvent.content as PiToolCallContent);
+    }
+  }
+}
+
+function ensureStartEvent(
+  stream: AssistantMessageEventStream,
+  state: StreamEventState,
+  partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
+): void {
+  if (state.emittedStart) {
+    return;
+  }
+
+  stream.push({
+    type: 'start',
+    partial: buildAssistantMessage(snapshotMessage(partialMessage)),
+  });
+  state.emittedStart = true;
+}
+
+function emitTextDelta(
+  stream: AssistantMessageEventStream,
+  state: StreamEventState,
+  partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
+  delta: string,
+): void {
+  ensureStartEvent(stream, state, partialMessage);
+
+  if (state.textIndex === null) {
+    state.textIndex = getOrCreateTextIndex(partialMessage);
+    stream.push({
+      type: 'text_start',
+      contentIndex: state.textIndex,
+      partial: buildAssistantMessage(snapshotMessage(partialMessage)),
+    });
+  }
+
+  state.textEmitted += delta;
+  stream.push({
+    type: 'text_delta',
+    contentIndex: state.textIndex,
+    delta,
+    partial: buildAssistantMessage(snapshotMessage(partialMessage)),
+  });
+}
+
+function emitThinkingDelta(
+  stream: AssistantMessageEventStream,
+  state: StreamEventState,
+  partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
+  delta: string,
+): void {
+  ensureStartEvent(stream, state, partialMessage);
+
+  if (state.thinkingIndex === null) {
+    state.thinkingIndex = getOrCreateThinkingIndex(partialMessage);
+    stream.push({
+      type: 'thinking_start',
+      contentIndex: state.thinkingIndex,
+      partial: buildAssistantMessage(snapshotMessage(partialMessage)),
+    });
+  }
+
+  state.thinkingEmitted += delta;
+  stream.push({
+    type: 'thinking_delta',
+    contentIndex: state.thinkingIndex,
+    delta,
+    partial: buildAssistantMessage(snapshotMessage(partialMessage)),
+  });
+}
+
+function emitToolCall(
+  stream: AssistantMessageEventStream,
+  state: StreamEventState,
+  partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
+  toolCall: PiToolCallContent,
+): void {
+  ensureStartEvent(stream, state, partialMessage);
+
+  if (state.toolCallIndices.has(toolCall.callId)) {
+    return;
+  }
+
+  const contentIndex = partialMessage.toolCalls.findIndex((call) => call.callId === toolCall.callId);
+  if (contentIndex === -1) {
+    return;
+  }
+
+  state.toolCallIndices.set(toolCall.callId, contentIndex);
+  stream.push({
+    type: 'toolcall_start',
+    contentIndex,
+    partial: buildAssistantMessage(snapshotMessage(partialMessage)),
+  });
+}
+
+function finalizeOpenContent(
+  stream: AssistantMessageEventStream,
+  state: StreamEventState,
+  finalMessage: { text: string; thinking: string; toolCalls: Array<{ callId: string; name: string; args: unknown }> },
+): void {
+  const finalAssistantMessage = buildAssistantMessage(finalMessage);
+  ensureStartEvent(stream, state, {
+    text: finalMessage.text,
+    thinking: finalMessage.thinking,
+    toolCalls: finalMessage.toolCalls.map((call) => ({ callId: call.callId, name: call.name, args: call.args })),
+  });
+
+  if (state.textIndex !== null) {
+    stream.push({
+      type: 'text_end',
+      contentIndex: state.textIndex,
+      content: finalMessage.text,
+      partial: finalAssistantMessage,
+    });
+    state.textIndex = null;
+  }
+
+  if (state.thinkingIndex !== null) {
+    stream.push({
+      type: 'thinking_end',
+      contentIndex: state.thinkingIndex,
+      content: finalMessage.thinking,
+      partial: finalAssistantMessage,
+    });
+    state.thinkingIndex = null;
+  }
+}
+
+function emitDone(stream: AssistantMessageEventStream, message: AssistantMessage): void {
+  const reason = message.stopReason === 'toolUse' ? 'toolUse' : message.stopReason === 'length' ? 'length' : 'stop';
+  stream.push({
+    type: 'done',
+    reason,
+    message,
+  });
+}
+
+function emitError(
+  stream: AssistantMessageEventStream,
+  errorMessage: string,
+  reason: 'error' | 'aborted',
+): void {
+  stream.push({
+    type: 'error',
+    reason,
+    error: {
+      role: 'assistant',
+      content: [],
+      stopReason: reason,
+      errorMessage,
+    },
+  });
+}
+
+function getOrCreateTextIndex(partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] }): number {
+  const existingIndex = partialMessageToContent(partialMessage).findIndex((item) => item.type === 'text');
+  return existingIndex >= 0 ? existingIndex : partialMessageToContent(partialMessage).length;
+}
+
+function getOrCreateThinkingIndex(partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] }): number {
+  const existingIndex = partialMessageToContent(partialMessage).findIndex((item) => item.type === 'thinking');
+  return existingIndex >= 0 ? existingIndex : partialMessageToContent(partialMessage).length;
+}
+
+function partialMessageToContent(partialMessage: {
+  text: string;
+  thinking: string;
+  toolCalls: PiToolCallContent[];
+}): AssistantMessageContent[] {
+  const content: AssistantMessageContent[] = [];
+
+  if (partialMessage.text.length > 0) {
+    content.push({ type: 'text', text: partialMessage.text });
+  }
+
+  if (partialMessage.thinking.length > 0) {
+    content.push({ type: 'thinking', thinking: partialMessage.thinking });
+  }
+
+  for (const toolCall of partialMessage.toolCalls) {
+    content.push({
+      type: 'toolCall',
+      callId: toolCall.callId,
+      toolName: toolCall.name,
+      args: toolCall.args,
+    });
+  }
+
+  return content;
+}
+
+function buildAssistantMessage(
+  message: {
+    text: string;
+    thinking: string;
+    toolCalls: Array<{ callId: string; name: string; args: unknown }>;
+  },
+  stopReason?: AssistantMessage['stopReason'],
+  errorMessage?: string,
+): AssistantMessage {
+  const toolCalls: PiToolCallContent[] = message.toolCalls.map((call) => ({
+    callId: call.callId,
+    name: call.name,
+    args: call.args,
+  }));
+
+  return {
+    role: 'assistant',
+    content: partialMessageToContent({
+      text: message.text,
+      thinking: message.thinking,
+      toolCalls,
+    }),
+    ...(stopReason ? { stopReason } : {}),
+    ...(errorMessage ? { errorMessage } : {}),
+  };
+}
+
+function snapshotMessage(partialMessage: {
+  text: string;
+  thinking: string;
+  toolCalls: PiToolCallContent[];
+}): { text: string; thinking: string; toolCalls: Array<{ callId: string; name: string; args: unknown }> } {
+  return {
+    text: partialMessage.text,
+    thinking: partialMessage.thinking,
+    toolCalls: partialMessage.toolCalls.map((call) => ({
+      callId: call.callId,
+      name: call.name,
+      args: call.args,
+    })),
+  };
+}
+
+function copyPartialMessage(
+  target: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
+  next: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
+): void {
+  target.text = next.text;
+  target.thinking = next.thinking;
+  target.toolCalls = next.toolCalls;
+}
+
+function mapStopReason(stopReason?: string): AssistantMessage['stopReason'] {
+  if (stopReason === 'toolUse') {
+    return 'toolUse';
+  }
+  if (stopReason === 'length') {
+    return 'length';
+  }
+  return 'stop';
 }

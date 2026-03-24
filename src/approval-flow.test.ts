@@ -60,6 +60,7 @@ const nativeToolCallFetch: ToolCallMetadata = {
 const mcpResult: ExtractedToolResult = {
   toolCallId: 'mcp_tools_read_123',
   toolName: 'read',
+  isError: false,
   payload: {
     name: 'read',
     response: { content: 'file contents' },
@@ -70,6 +71,7 @@ const mcpResult: ExtractedToolResult = {
 const nativeResultSearch: ExtractedToolResult = {
   toolCallId: 'google_web_search_456',
   toolName: 'google_web_search',
+  isError: false,
   payload: {
     name: 'google_web_search',
     response: { output: 'Search results here' },
@@ -80,6 +82,7 @@ const nativeResultSearch: ExtractedToolResult = {
 const nativeResultFetch: ExtractedToolResult = {
   toolCallId: 'web_fetch_789',
   toolName: 'web_fetch',
+  isError: false,
   payload: {
     name: 'web_fetch',
     response: { output: 'Fetched content here' },
@@ -636,6 +639,7 @@ describe('edge cases', () => {
     const complexResult: ExtractedToolResult = {
       toolCallId: 'test_123',
       toolName: 'read',
+      isError: false,
       payload: {
         name: 'read',
         response: {

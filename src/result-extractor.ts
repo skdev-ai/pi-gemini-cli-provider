@@ -70,16 +70,17 @@ export function extractToolResultMessages(messages: unknown[]): PiToolResultMess
  * @returns ExtractedToolResult ready for injection
  */
 export function normalizeToolResult(message: PiToolResultMessage): ExtractedToolResult {
-  const { toolCallId, name, content } = message;
+  const { toolCallId, toolName, isError = false, content } = message;
   
   // Normalize content into response payload
-  const response = normalizeContent(content);
+  const response = normalizeContent(content, isError);
   
   return {
     toolCallId,
-    toolName: name,
+    toolName,
+    isError,
     payload: {
-      name,
+      name: toolName,
       response,
     },
   };
@@ -89,34 +90,45 @@ export function normalizeToolResult(message: PiToolResultMessage): ExtractedTool
  * Normalizes pi's content array into a response payload.
  * 
  * @param content - pi ToolResultMessage.content array
+ * @param isError - Whether the tool execution failed
  * @returns Normalized response object
  */
 function normalizeContent(
-  content: Array<{ type: 'text' | 'image'; text?: string; image?: string }>
+  content: PiToolResultMessage['content'],
+  isError: boolean,
 ): unknown {
   if (!content || content.length === 0) {
-    return { output: '' };
+    return isError ? { output: '', isError: true } : { output: '' };
   }
   
   // Single text part - return simple string
   if (content.length === 1 && content[0]?.type === 'text') {
-    return { output: content[0].text ?? '' };
+    const response: Record<string, unknown> = { output: content[0].text ?? '' };
+    if (isError) response.isError = true;
+    return response;
   }
   
   // Single image part - return image data
   if (content.length === 1 && content[0]?.type === 'image') {
-    return { image: content[0].image ?? null };
+    const response: Record<string, unknown> = {
+      image: {
+        data: content[0].data ?? null,
+        mimeType: content[0].mimeType ?? null,
+      },
+    };
+    if (isError) response.isError = true;
+    return response;
   }
   
   // Multiple parts or mixed - return structured object
   const textParts: string[] = [];
-  const imageParts: string[] = [];
+  const imageParts: Array<{ data: string; mimeType?: string }> = [];
   
   for (const part of content) {
     if (part.type === 'text' && part.text) {
       textParts.push(part.text);
-    } else if (part.type === 'image' && part.image) {
-      imageParts.push(part.image);
+    } else if (part.type === 'image' && part.data) {
+      imageParts.push({ data: part.data, mimeType: part.mimeType });
     }
   }
   
@@ -129,6 +141,10 @@ function normalizeContent(
   
   if (imageParts.length > 0) {
     response.images = imageParts;
+  }
+
+  if (isError) {
+    response.isError = true;
   }
   
   return response;

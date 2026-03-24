@@ -33,6 +33,13 @@ export interface ProviderModel {
   contextWindow: number;
   /** Maximum output tokens */
   maxTokens: number;
+  /** Cost metadata expected by GSD's provider model schema */
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+  };
 }
 
 /**
@@ -162,6 +169,12 @@ export function mapModelToProviderFormat(modelId: string): ProviderModel {
     input: ['text', 'image'],
     contextWindow: 1048576,
     maxTokens: 65536,
+    cost: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    },
   };
 }
 

@@ -285,6 +285,9 @@ const ZERO_USAGE: Usage = {
   },
 };
 
+let lastTaskId: string | undefined;
+let lastContextId: string | undefined;
+
 // =============================================================================
 // Public entrypoints
 // =============================================================================
@@ -387,13 +390,23 @@ export function streamSimpleGsd(
   options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
   const prompt = extractPromptFromContext(context);
+  const isReCall = detectReCall(context.messages);
 
-  const { stream } = streamSimple({
+  const { stream, result } = streamSimple({
     prompt,
     context,
     model: model.id,
     signal: options?.signal,
+    taskId: isReCall ? lastTaskId : undefined,
+    contextId: isReCall ? lastContextId : undefined,
   });
+
+  if (!isReCall) {
+    void result.then((resolved) => {
+      lastTaskId = resolved.taskId;
+      lastContextId = resolved.contextId;
+    });
+  }
 
   return stream;
 }

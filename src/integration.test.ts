@@ -248,7 +248,8 @@ describeLive('Live Integration', () => {
             {
               role: 'toolResult',
               toolCallId: pendingCall!.callId,
-              name: pendingCall!.name,
+              toolName: pendingCall!.name,
+              isError: false,
               content: [{ type: 'text', text: toolResultContent }],
             },
           ],

@@ -476,7 +476,8 @@ describe('streamSimple', () => {
           {
             role: 'toolResult',
             toolCallId: 'call_1',
-            name: 'mcp_tools_search',
+            toolName: 'mcp_tools_search',
+            isError: false,
             content: [{ type: 'text', text: 'Search results' }],
           },
         ],
@@ -573,7 +574,8 @@ describe('streamSimple', () => {
           {
             role: 'toolResult',
             toolCallId: 'call_1',
-            name: 'mcp_tools_search',
+            toolName: 'mcp_tools_search',
+            isError: false,
             content: [{ type: 'text', text: 'Search results' }],
           },
         ],
@@ -797,10 +799,10 @@ describe('streamSimpleGsd', () => {
     });
   });
 
-  it('preserves legacy string user content', async () => {
+  it('uses the last fresh task IDs for re-calls', async () => {
     mockCreateTask.mockReturnValue({
-      taskId: 'task_string_prompt',
-      contextId: 'ctx_string_prompt',
+      taskId: 'task_initial',
+      contextId: 'ctx_initial',
       state: 'submitted',
       awaitingApproval: false,
       pendingToolCalls: [],
@@ -808,10 +810,10 @@ describe('streamSimpleGsd', () => {
     });
 
     mockSendMessageStream.mockResolvedValue({
-      taskId: 'task_string_prompt',
-      contextId: 'ctx_string_prompt',
+      taskId: 'task_initial',
+      contextId: 'ctx_initial',
       sseStream: new ReadableStream(),
-      metadata: { url: 'http://localhost:41242/', requestId: 'req_string_prompt' },
+      metadata: { url: 'http://localhost:41242/', requestId: 'req_initial' },
     });
 
     mockParseSSEStream.mockImplementation(async function* () {
@@ -819,34 +821,78 @@ describe('streamSimpleGsd', () => {
     });
 
     mockGetTaskState.mockReturnValue({
-      taskId: 'task_string_prompt',
-      contextId: 'ctx_string_prompt',
+      taskId: 'task_initial',
+      contextId: 'ctx_initial',
       state: 'completed',
       awaitingApproval: false,
       pendingToolCalls: [],
       isTerminal: true,
     });
 
-    const stream = streamSimpleGsd(
+    const initialStream = streamSimpleGsd(
       { id: 'gemini-a2a' } as any,
       {
         messages: [
           {
             role: 'user',
-            content: 'Legacy string prompt',
+            content: [{ type: 'text', text: 'Initial prompt' }],
             timestamp: Date.now(),
           },
         ],
       },
     );
 
-    await collectEvents(stream);
+    await collectEvents(initialStream);
 
-    expect(mockSendMessageStream).toHaveBeenCalledWith({
-      prompt: 'Legacy string prompt',
-      taskId: 'task_string_prompt',
-      contextId: 'ctx_string_prompt',
-      model: 'gemini-a2a',
+    mockSendMessageStream.mockClear();
+    mockGetPendingToolCalls.mockReturnValue([
+      {
+        callId: 'call_recall',
+        name: 'mcp_tools_search',
+        args: { query: 'test' },
+        status: 'scheduled',
+      },
+    ]);
+
+    mockInjectResult.mockResolvedValue({
+      taskId: 'task_initial',
+      sseStream: new ReadableStream(),
+      metadata: { url: 'http://localhost:41242/', requestId: 'req_recall' },
+    });
+
+    mockGetTaskState.mockReturnValue({
+      taskId: 'task_initial',
+      contextId: 'ctx_initial',
+      state: 'completed',
+      awaitingApproval: false,
+      pendingToolCalls: [],
+      isTerminal: true,
+    });
+
+    const recallStream = streamSimpleGsd(
+      { id: 'gemini-a2a' } as any,
+      {
+        messages: [
+          {
+            role: 'toolResult',
+            toolCallId: 'call_recall',
+            toolName: 'mcp_tools_search',
+            isError: false,
+            content: [{ type: 'text', text: 'Search results' }],
+            timestamp: Date.now(),
+          },
+        ],
+      } as any,
+    );
+
+    await collectEvents(recallStream);
+
+    expect(mockSendMessageStream).not.toHaveBeenCalled();
+    expect(mockInjectResult).toHaveBeenCalledWith({
+      taskId: 'task_initial',
+      callId: 'call_recall',
+      toolName: 'search',
+      functionResponse: expect.anything(),
       signal: undefined,
     });
   });

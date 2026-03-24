@@ -52,6 +52,7 @@ describe('mapModelToProviderFormat', () => {
     expect(model.input).toEqual(['text', 'image']);
     expect(model.contextWindow).toBe(1048576);
     expect(model.maxTokens).toBe(65536);
+    expect(model.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
   });
 
   it('should derive display name from model ID', () => {

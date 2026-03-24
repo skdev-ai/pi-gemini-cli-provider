@@ -483,6 +483,8 @@ export interface ExtractedToolResult {
   toolCallId: string;
   /** Tool name */
   toolName: string;
+  /** Whether the tool execution failed */
+  isError: boolean;
   /** Result payload for injection */
   payload: ToolResultPayload;
 }
@@ -497,16 +499,26 @@ export interface PiToolResultMessage {
   /** Tool call ID this result is for */
   toolCallId: string;
   /** Tool name */
-  name: string;
+  toolName: string;
+  /** Whether the tool execution failed */
+  isError?: boolean;
   /** Result content */
-  content: Array<{
-    /** Content type */
-    type: 'text' | 'image';
-    /** Text content (if type === 'text') */
-    text?: string;
-    /** Image data (if type === 'image') */
-    image?: string;
-  }>;
+  content: Array<
+    | {
+        /** Content type */
+        type: 'text';
+        /** Text content */
+        text?: string;
+      }
+    | {
+        /** Content type */
+        type: 'image';
+        /** Base64 image data */
+        data?: string;
+        /** Image MIME type */
+        mimeType?: string;
+      }
+  >;
 }
 
 // ============================================================================

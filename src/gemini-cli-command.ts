@@ -101,7 +101,18 @@ async function handleStatus(
   const packageRoot = getA2APackageRoot();
   if (packageRoot) {
     const serverPath = packageRoot + '/dist/a2a-server.mjs';
-    const hasPatch1 = true; // Assumed if binary exists (headless fix is part of base install)
+    
+    // Check Patch 1 by reading the bundle file (not hardcoded)
+    let hasPatch1 = false;
+    try {
+      const { readFileSync } = await import('node:fs');
+      const content = readFileSync(serverPath, 'utf-8');
+      hasPatch1 = content.includes('isHeadlessMode(options) { return false;');
+    } catch {
+      // If we can't read the file, assume not patched
+      hasPatch1 = false;
+    }
+    
     const hasPatch2 = checkA2APatched(serverPath);
     const hasPatch3 = checkA2AInjectResultPatched();
 

@@ -150,13 +150,16 @@ interface SessionContext {
 }
 
 export default async function(pi: ExtensionAPI) {
-  // Register provider on extension load
+  // ============================================================================
+  // Extension Load: Provider Registration, Command Registration, Workspace Prep
+  // ============================================================================
+  
+  // Register provider on extension load (before any LLM requests)
   try {
-    const registrationResult = await registerGeminiProvider(pi);
-    console.log(`[gemini-a2a] Provider registered with ${registrationResult.models.length} models`);
+    await registerGeminiProvider(pi);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[gemini-a2a] Failed to register provider: ${message}`);
+    // Provider registration failure is logged but doesn't block extension load
+    // User will see no models available when they run /gemini-cli models
   }
 
   // Register /gemini-cli command for provider lifecycle management
@@ -167,6 +170,20 @@ export default async function(pi: ExtensionAPI) {
     },
   });
 
+  // Prepare provider workspace on extension load
+  // This ensures the workspace exists before A2A server startup
+  try {
+    const { generateWorkspace } = await import('./workspace-generator.js');
+    generateWorkspace();
+  } catch (error) {
+    // Workspace generation failure doesn't block extension load
+    // Will be retried on install-a2a command
+  }
+
+  // ============================================================================
+  // Session Start: Schema Freshness, Stale Detection, Auto-Startup
+  // ============================================================================
+  
   // Register session_start handler to write tool schemas before A2A server starts
   // Ordering matters per R015 - schemas must exist before MCP server tools/list handler runs
   pi.on('session_start', async (_event: any, ctx: SessionContext) => {
@@ -188,20 +205,11 @@ export default async function(pi: ExtensionAPI) {
     const isInjectResultPatched = checkA2AInjectResultPatched();
 
     if (isInstalled && isPatched && isInjectResultPatched) {
-      // Fire-and-forget startup
-      startServer()
-        .then(() => console.log('[gemini-a2a] A2A server started successfully'))
-        .catch(err => console.error(`[gemini-a2a] A2A startup failed: ${err.message}`));
-    } else {
-      const missingPatches = [];
-      if (!isPatched) missingPatches.push('Patch 2 (_model)');
-      if (!isInjectResultPatched) missingPatches.push('Patch 3 (inject_result)');
-      
-      if (missingPatches.length > 0) {
-        console.log(`[gemini-a2a] A2A patches missing: ${missingPatches.join(', ')}. Run /gemini-cli install-a2a.`);
-      } else if (!isInstalled) {
-        console.log('[gemini-a2a] A2A server not installed. Run /gemini-cli install-a2a.');
-      }
+      // Fire-and-forget startup with user notification on failure
+      startServer().catch(err => {
+        const message = err instanceof Error ? err.message : String(err);
+        ctx.ui.notify(`A2A server failed to start: ${message}`, 'warning');
+      });
     }
   });
   

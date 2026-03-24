@@ -11,13 +11,33 @@
  * - Patch verification before reuse of existing servers
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess, exec } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { A2AServerState, SearchError } from './types.js';
 import { getA2APackageRoot } from './a2a-path.js';
 import { checkA2APatched, checkA2AInjectResultPatched } from './availability.js';
 import { isPortInUse, isServerHealthy } from './port-check.js';
 import { debugLog } from './logger.js';
 import { resolveWorkspacePath } from './workspace-generator.js';
+
+const execAsync = promisify(exec);
+
+/**
+ * Gets the PID of the process listening on a given port.
+ * Uses lsof to find the process.
+ * 
+ * @param port - Port number to check
+ * @returns PID or null if not found
+ */
+async function getPidFromPort(port: number): Promise<number | null> {
+  try {
+    const { stdout } = await execAsync(`lsof -ti :${port}`);
+    const pid = parseInt(stdout.trim(), 10);
+    return isNaN(pid) ? null : pid;
+  } catch {
+    return null;
+  }
+}
 
 // ============================================================================
 // Configuration
@@ -265,6 +285,17 @@ export async function startServer(config?: A2AStartupConfig): Promise<void> {
   const healthy = await isServerHealthy(port);
   if (healthy) {
     log('Port check result: Healthy A2A server detected, reusing existing server');
+    
+    // Capture the PID of the reused server so stopServer() can kill it
+    const reusedPid = await getPidFromPort(port);
+    if (reusedPid) {
+      log(`Captured PID ${reusedPid} for reused server`);
+      // Store in a way that stopServer can access - we'll use childProcess even though we didn't spawn it
+      // This allows stopServer() to work correctly
+      childProcess = { pid: reusedPid } as import('child_process').ChildProcess;
+    } else {
+      log('Warning: Could not capture PID for reused server - manual stop may fail');
+    }
     
     // Verify required patches are present before reusing
     const packageRoot = getA2APackageRoot();

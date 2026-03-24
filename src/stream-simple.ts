@@ -40,9 +40,9 @@ import {
 } from './event-bridge.js';
 import { incrementProviderTaskCount } from './a2a-lifecycle.js';
 
-// ============================================================================
+// =============================================================================
 // Pi Stream Type (local definition since 'pi' module not available at build time)
-// ============================================================================
+// =============================================================================
 
 /**
  * Pi AssistantMessageEventStream interface.
@@ -56,6 +56,8 @@ export interface AssistantMessageEventStream {
   error(err: Error): void;
   /** Signal completion */
   complete(): void;
+  /** End the stream */
+  end?(): void;
   /** Register event listener (for testing) */
   onEvent?(listener: (event: AssistantMessageEvent) => void): () => void;
   /** Register error listener (for testing) */
@@ -76,9 +78,9 @@ export type AssistantMessageEvent =
   | { type: 'thinking'; content: string }
   | { type: 'toolCall'; callId: string; name: string; args: unknown };
 
-// ============================================================================
+// =============================================================================
 // Types
-// ============================================================================
+// =============================================================================
 
 /**
  * Parameters for streamSimple operation.
@@ -116,35 +118,43 @@ export interface StreamSimpleResult {
   };
 }
 
-// ============================================================================
-// Main Entry Point
-// ============================================================================
+// =============================================================================
+// Main Entry Point - SYNCHRONOUS (GSD-compatible)
+// =============================================================================
 
 /**
  * Implements the streamSimple orchestration for Gemini A2A provider.
  * 
- * Returns a pi AssistantMessageEventStream immediately, then populates it
- * asynchronously from A2A SSE events. Handles:
+ * CRITICAL: This function is SYNCHRONOUS and returns the stream immediately.
+ * Async work happens in a fire-and-forget IIFE that populates the stream.
  * 
- * - Fresh prompts: Stream A2A output until completion or approval
- * - MCP approvals: Emit toolCall blocks, return stopReason: 'toolUse'
- * - Native approvals: Auto-approve and continue inline
- * - Re-calls: Detect toolResult messages, inject results, resume streaming
+ * Pattern matches custom-provider-anthropic:
+ * 1. Create stream
+ * 2. Start async IIFE that populates stream via push()
+ * 3. Return stream immediately (don't await, don't wrap in Promise)
  * 
  * @param params - Stream parameters
- * @returns AssistantMessageEventStream populated with pi events
+ * @returns AssistantMessageEventStream (synchronous return)
  */
-export async function streamSimple(params: StreamSimpleParams): Promise<{
+export function streamSimple(params: StreamSimpleParams): {
   stream: AssistantMessageEventStream;
   result: Promise<StreamSimpleResult>;
-}> {
+} {
   const { prompt, context, taskId, contextId, model, signal } = params;
   
-  // Create the stream that will be returned immediately
+  // Step 1: Create the stream that will be returned immediately
   const stream = createAssistantMessageEventStream();
   
-  // Create a promise that resolves when streaming completes
-  const resultPromise = (async (): Promise<StreamSimpleResult> => {
+  // Step 2: Create a promise for the result (tracked separately)
+  let resolveResult!: (value: StreamSimpleResult) => void;
+  let rejectResult!: (reason: Error) => void;
+  const resultPromise = new Promise<StreamSimpleResult>((resolve, reject) => {
+    resolveResult = resolve;
+    rejectResult = reject;
+  });
+  
+  // Step 3: Fire-and-forget async work that populates the stream
+  (async () => {
     try {
       // Increment provider task count for tracking and restart mitigation
       await incrementProviderTaskCount();
@@ -152,9 +162,11 @@ export async function streamSimple(params: StreamSimpleParams): Promise<{
       // Check if this is a re-call (tool results present)
       const isReCall = detectReCall(context.messages);
       
+      let result: StreamSimpleResult;
+      
       if (isReCall) {
         // Handle re-call: inject results and resume streaming
-        return await handleReCall(stream, {
+        result = await handleReCall(stream, {
           context,
           taskId: taskId!,
           contextId: contextId!,
@@ -163,7 +175,7 @@ export async function streamSimple(params: StreamSimpleParams): Promise<{
         });
       } else {
         // Handle fresh prompt: start new task and stream
-        return await handleFreshPrompt(stream, {
+        result = await handleFreshPrompt(stream, {
           prompt,
           context,
           taskId,
@@ -172,23 +184,84 @@ export async function streamSimple(params: StreamSimpleParams): Promise<{
           signal,
         });
       }
+      
+      // Resolve the result promise
+      resolveResult(result);
     } catch (error) {
-      // Handle errors: emit error event and reject
+      // Handle errors: emit error event and reject result promise
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       stream.error(new Error(errorMessage));
-      throw error;
+      rejectResult(new Error(errorMessage));
     }
   })();
   
+  // Step 4: Return immediately with stream and result promise
   return {
     stream,
     result: resultPromise,
   };
 }
 
-// ============================================================================
+// =============================================================================
+// GSD-Compatible Export (correct signature)
+// =============================================================================
+
+/**
+ * Minimal type definitions for GSD compatibility.
+ * These match what GSD actually passes to streamSimple.
+ */
+interface Model {
+  id: string;
+  provider?: string;
+  api?: string;
+  baseUrl?: string;
+}
+
+interface SimpleStreamOptions {
+  signal?: AbortSignal;
+  reasoning?: string;
+  thinkingBudgets?: Record<string, number>;
+  maxTokens?: number;
+  apiKey?: string;
+}
+
+/**
+ * GSD-compatible streamSimple wrapper.
+ * 
+ * Signature matches GSD's contract:
+ *   streamSimple(model: Model, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream
+ * 
+ * Returns the stream synchronously (fire-and-forget pattern).
+ * The async work happens in the background, populating the stream.
+ * 
+ * @param model - Model configuration (includes model.id for _model metadata)
+ * @param context - Pi context with message history and tools
+ * @param options - Optional stream options (signal, reasoning, etc.)
+ * @returns AssistantMessageEventStream populated with pi events
+ */
+export function streamSimpleGsd(
+  model: Model,
+  context: Context,
+  options?: SimpleStreamOptions,
+): AssistantMessageEventStream {
+  // Extract what we need from model/context/options
+  const lastMessage = context.messages[context.messages.length - 1];
+  const prompt = typeof lastMessage === 'object' && lastMessage && 'content' in lastMessage ? (lastMessage as any).content : '';
+  
+  // Call our internal implementation (returns synchronously now!)
+  const { stream } = streamSimple({
+    prompt,
+    context,
+    model: model.id,
+    signal: options?.signal,
+  });
+  
+  return stream;
+}
+
+// =============================================================================
 // Fresh Prompt Handler
-// ============================================================================
+// =============================================================================
 
 /**
  * Handles a fresh prompt (no tool results in context).
@@ -348,9 +421,9 @@ async function handleFreshPrompt(
   };
 }
 
-// ============================================================================
+// =============================================================================
 // Re-call Handler
-// ============================================================================
+// =============================================================================
 
 /**
  * Handles a re-call (tool results present in context).
@@ -485,9 +558,9 @@ async function handleReCall(
   };
 }
 
-// ============================================================================
+// =============================================================================
 // Stream Creation Helper
-// ============================================================================
+// =============================================================================
 
 /**
  * Creates a pi AssistantMessageEventStream with proper error handling.
@@ -498,9 +571,6 @@ async function handleReCall(
  * @returns AssistantMessageEventStream ready for population
  */
 function createAssistantMessageEventStream(): AssistantMessageEventStream {
-  // This is a mock implementation for S04
-  // In real pi integration, this would use pi's actual stream API
-  
   const eventListeners: ((event: AssistantMessageEvent) => void)[] = [];
   const errorListeners: ((error: Error) => void)[] = [];
   const completeListeners: (() => void)[] = [];
@@ -521,6 +591,12 @@ function createAssistantMessageEventStream(): AssistantMessageEventStream {
     },
     
     complete() {
+      if (completed || errored) return;
+      completed = true;
+      completeListeners.forEach(listener => listener());
+    },
+    
+    end() {
       if (completed || errored) return;
       completed = true;
       completeListeners.forEach(listener => listener());

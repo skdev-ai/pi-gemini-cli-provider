@@ -35,6 +35,7 @@ vi.mock('./port-check.js', () => ({
 
 vi.mock('node:child_process', () => ({
   spawn: vi.fn(),
+  exec: vi.fn(),
 }));
 
 describe('a2a-lifecycle inject_result patch verification', () => {

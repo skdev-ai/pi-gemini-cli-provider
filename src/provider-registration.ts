@@ -211,7 +211,7 @@ export async function registerGeminiProvider(
   const providerId = 'gemini-a2a';
 
   // Import streamSimple for the provider config
-  const { streamSimple } = await import('./stream-simple.js');
+  const { streamSimpleGsd } = await import('./stream-simple.js');
 
   // Register the provider with GSD
   // GSD's ModelRegistry.validateProviderConfig() requires api, baseUrl, and apiKey when streamSimple is set
@@ -222,7 +222,7 @@ export async function registerGeminiProvider(
     baseUrl: 'http://localhost:41242',
     apiKey: 'local',
     models,
-    streamSimple,
+    streamSimple: streamSimpleGsd,
   });
 
   return {

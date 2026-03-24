@@ -113,7 +113,7 @@ describe('availability', () => {
 
     it('returns true when marker is present', () => {
       vi.mocked(readFileSync).mockReturnValue(
-        'if (currentTask.taskState === "input-required") { logger.info("[CoderAgentExecutor] Task " + taskId + " aborted while awaiting input. Preserving pending tools."); }'
+        'if (!abortController.signal.aborted) { if (typeof currentTask !== "undefined" && currentTask && currentTask.taskState === "input-required") { logger.info("[CoderAgentExecutor] Socket closed while task " + taskId + " awaits input. Preserving pending tools."); } else { abortController.abort(); } }'
       );
 
       const result = checkA2APendingToolAbortPatched('/mock/path.mjs');

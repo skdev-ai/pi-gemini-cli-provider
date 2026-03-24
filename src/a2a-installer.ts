@@ -308,15 +308,15 @@ function applyPatches(ctx: InstallerContext): void {
       throw new Error('Failed to apply inject_result patch');
     }
 
-    // Patch 4: preserve pending tools when abort fires while awaiting input
-    const patch4Target = 'currentTask.cancelPendingTools("Execution aborted");';
-    if (!content.includes('PATCH: preserve pending tools on input-required abort')) {
-      const contentWithPatch3 = readFileSync(a2aPath, 'utf-8');
+    // Patch 4: preserve pending tools by preventing abort while awaiting input
+    const patch4Target = '        if (!abortController.signal.aborted) {\n          abortController.abort();\n        }';
+    const contentWithPatch3 = readFileSync(a2aPath, 'utf-8');
+    if (!contentWithPatch3.includes('Socket closed while task ') || !contentWithPatch3.includes('awaits input. Preserving pending tools.')) {
       if (!contentWithPatch3.includes(patch4Target)) {
-        throw new Error('Patch target not found: abortSignal input-required guard');
+        throw new Error('Patch target not found: abortController input-required guard');
       }
 
-      const patch4Replacement = `if (currentTask.taskState === "input-required") {\n                    logger.info("[CoderAgentExecutor] Task " + taskId + " aborted while awaiting input. Preserving pending tools.");\n                }\n                else {\n                    currentTask.cancelPendingTools("Execution aborted");\n                }`;
+      const patch4Replacement = `        if (!abortController.signal.aborted) {\n          if (typeof currentTask !== "undefined" && currentTask && currentTask.taskState === "input-required") {\n            logger.info("[CoderAgentExecutor] Socket closed while task " + taskId + " awaits input. Preserving pending tools.");\n          }\n          else {\n            abortController.abort();\n          }\n        }`;
       writeFileSync(a2aPath, contentWithPatch3.replace(patch4Target, patch4Replacement), 'utf-8');
     }
     

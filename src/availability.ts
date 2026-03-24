@@ -125,8 +125,9 @@ export function checkA2APendingToolAbortPatched(filePath: string): boolean {
   try {
     const content = readFileSync(filePath, 'utf-8');
     return (
-      content.includes('if (currentTask.taskState === "input-required")') &&
-      content.includes('aborted while awaiting input. Preserving pending tools.')
+      content.includes('typeof currentTask !== "undefined" && currentTask && currentTask.taskState === "input-required"') &&
+      content.includes('Socket closed while task ') &&
+      content.includes('awaits input. Preserving pending tools.')
     );
   } catch {
     return false;

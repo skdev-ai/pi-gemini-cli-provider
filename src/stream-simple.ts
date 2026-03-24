@@ -368,7 +368,7 @@ async function handleReCall(
     signal?: AbortSignal;
   }
 ): Promise<StreamSimpleResult> {
-  const { context, taskId, contextId, model, signal } = params;
+  const { context, taskId, contextId, signal } = params;
   
   // Extract tool results from context.messages
   const extractedResults = extractAllToolResults(context.messages);
@@ -395,6 +395,10 @@ async function handleReCall(
   // Build reinjection work list
   const workItems = buildReinjectionWorkList(pendingToolCalls, extractedResults);
   
+  // Accumulator for the final message
+  const partialMessage = createPartialMessage();
+  let stopReason: string | undefined;
+  
   // Inject results in order (preserving original tool call order)
   for (const item of workItems) {
     try {
@@ -407,9 +411,10 @@ async function handleReCall(
       });
       
       // Consume the injection response stream
-      // This may contain acknowledgments or immediate follow-up events
+      // This contains the model's continuation after result injection
       for await (const event of parseSSEStream(sseStream, { signal })) {
         updateTaskState(taskId, event);
+        updatePartialMessage(partialMessage, event);
         
         // Translate and emit any events from injection response (wrap single event in array)
         const piEvents = translateEvents([event]);
@@ -423,6 +428,27 @@ async function handleReCall(
             stream.push({ type: "tool_call", callId: toolCall.callId, name: toolCall.name, args: toolCall.args });
           }
         }
+        
+        // Check for approval state (may have more tool calls after continuation)
+        const updatedState = getTaskState(taskId);
+        if (updatedState?.awaitingApproval) {
+          const morePendingCalls = getPendingToolCalls(taskId);
+          if (morePendingCalls.length > 0) {
+            // More tool calls - return control to GSD
+            stopReason = 'toolUse';
+            break;
+          }
+        }
+        
+        // Check for terminal state
+        if (updatedState?.isTerminal) {
+          break;
+        }
+      }
+      
+      // If we hit stopReason or terminal state, break out of injection loop
+      if (stopReason || getTaskState(taskId)?.isTerminal) {
+        break;
       }
     } catch (error) {
       // Injection failed - mark task as failed
@@ -436,58 +462,7 @@ async function handleReCall(
   const injectedCallIds = workItems.map(item => item.callId);
   clearPendingToolCalls(taskId, injectedCallIds);
   
-  // Resume streaming the model's response
-  // NOTE: Sending empty prompt to trigger model continuation after inject_result.
-  // This may or may not be necessary - depends on whether A2A executor auto-continues
-  // after inject_result resolves pending tools. To be validated during S06 integration testing.
-  // See .gsd/KNOWLEDGE.md for details.
-  const { sseStream } = await sendMessageStream({
-    prompt: '', // Empty prompt - we're resuming existing task
-    taskId,
-    contextId,
-    model,
-    signal,
-  });
-  
-  // Consume resumed SSE stream
-  const partialMessage = createPartialMessage();
-  let stopReason: string | undefined;
-  
-  for await (const event of parseSSEStream(sseStream, { signal })) {
-    updateTaskState(taskId, event);
-    updatePartialMessage(partialMessage, event);
-    
-    // Translate and emit pi events (wrap single event in array)
-    const piEvents = translateEvents([event]);
-    for (const piEvent of piEvents) {
-      if (piEvent.type === 'text' && piEvent.content) {
-        stream.push({ type: "text_delta", delta: piEvent.content as string });
-      } else if (piEvent.type === 'thinking' && piEvent.content) {
-        stream.push({ type: "thinking_delta", delta: piEvent.content as string });
-      } else if (piEvent.type === 'toolCall') {
-        const toolCall = piEvent.content as any;
-        stream.push({ type: "tool_call", callId: toolCall.callId, name: toolCall.name, args: toolCall.args });
-      }
-    }
-    
-    // Check for approval state (may have more tool calls)
-    const updatedState = getTaskState(taskId);
-    if (updatedState?.awaitingApproval) {
-      const morePendingCalls = getPendingToolCalls(taskId);
-      if (morePendingCalls.length > 0) {
-        // More tool calls - return control to GSD
-        stopReason = 'toolUse';
-        break;
-      }
-    }
-    
-    // Check for terminal state
-    if (updatedState?.isTerminal) {
-      break;
-    }
-  }
-  
-  // Build final message
+  // Build final message from accumulated partialMessage
   const finalMessage = {
     text: partialMessage.text,
     thinking: partialMessage.thinking,

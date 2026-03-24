@@ -79,10 +79,11 @@ Provider lifecycle management and diagnostics.
 /gemini-cli status
 ```
 Reports:
-- A2A server state (status, port, uptime, search count)
+- A2A server state (status, port, uptime, search count, provider task count)
 - Patch status (Patch 1, 2, 3)
 - Workspace path
 - Discovered model count
+- Last error and exit code (if applicable)
 
 **`install-a2a`** — Install and patch A2A server
 ```
@@ -138,7 +139,9 @@ On extension load, the provider:
 - **Startup**: Auto-started on `session_start` if installed and patched
 - **Health Monitoring**: Periodic health checks with auto-respawn
 - **Search Count Limit**: Auto-restarts at 1000 searches to prevent memory leaks
+- **Provider Task Count**: Auto-restarts at 1000 provider tasks to prevent memory leaks
 - **Patch Verification**: Verifies required patches before reuse
+- **Shared Server**: Both search and provider extensions share the same A2A server instance on port 41242
 
 ### Workspace
 

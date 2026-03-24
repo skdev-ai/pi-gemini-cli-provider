@@ -47,9 +47,10 @@ describe('a2a-lifecycle inject_result patch verification', () => {
     // Reset internal state
     __testing__.setState({
       status: 'idle',
-      port: 41242,
+      port: 42,
       uptime: null,
       searchCount: 0,
+      providerTaskCount: 0,
       lastError: null,
       exitCode: null,
       stdoutBuffer: [],

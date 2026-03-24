@@ -88,6 +88,7 @@ async function handleStatus(
   }
 
   lines.push(`- Search Count: \`${serverState.searchCount}\``);
+  lines.push(`- Provider Task Count: \`${serverState.providerTaskCount}\``);
 
   if (serverState.exitCode !== null) {
     lines.push(`- Exit Code: \`${serverState.exitCode}\``);

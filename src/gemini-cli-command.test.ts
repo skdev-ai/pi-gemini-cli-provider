@@ -61,6 +61,7 @@ describe('gemini-cli-command', () => {
         port: 41242,
         uptime: null,
         searchCount: 0,
+        providerTaskCount: 0,
         lastError: null,
         exitCode: null,
         stdoutBuffer: [],
@@ -96,6 +97,7 @@ describe('gemini-cli-command', () => {
         port: 41242,
         uptime: null,
         searchCount: 0,
+        providerTaskCount: 0,
         lastError: null,
         exitCode: null,
         stdoutBuffer: [],
@@ -118,6 +120,7 @@ describe('gemini-cli-command', () => {
         port: 41242,
         uptime: 1000,
         searchCount: 5,
+        providerTaskCount: 0,
         lastError: null,
         exitCode: null,
         stdoutBuffer: [],
@@ -137,6 +140,7 @@ describe('gemini-cli-command', () => {
         port: 41242,
         uptime: 1000,
         searchCount: 5,
+        providerTaskCount: 0,
         lastError: null,
         exitCode: null,
         stdoutBuffer: [],
@@ -204,6 +208,7 @@ describe('gemini-cli-command', () => {
         port: 41242,
         uptime: 5000,
         searchCount: 10,
+        providerTaskCount: 0,
         lastError: null,
         exitCode: null,
         stdoutBuffer: [],
@@ -222,6 +227,31 @@ describe('gemini-cli-command', () => {
       expect(output).toContain('Port: `41242`');
       expect(output).toContain('Uptime: `5s`');
       expect(output).toContain('Search Count: `10`');
+      expect(output).toContain('Provider Task Count: `0`');
+    });
+
+    it('reports provider task count', async () => {
+      vi.mocked(getServerState).mockReturnValue({
+        status: 'running',
+        port: 41242,
+        uptime: 10000,
+        searchCount: 5,
+        providerTaskCount: 25,
+        lastError: null,
+        exitCode: null,
+        stdoutBuffer: [],
+        stderrBuffer: [],
+      });
+      vi.mocked(getA2APackageRoot).mockReturnValue('/mock/a2a');
+      vi.mocked(checkA2APatched).mockReturnValue(true);
+      vi.mocked(checkA2AInjectResultPatched).mockReturnValue(true);
+      vi.mocked(getAvailableModelIds).mockResolvedValue([]);
+
+      await handleGeminiCliCommand('status', ctx);
+
+      const output = ctx.ui.notify.mock.calls[0][0] as string;
+      expect(output).toContain('Search Count: `5`');
+      expect(output).toContain('Provider Task Count: `25`');
     });
 
     it('reports patch status', async () => {
@@ -230,6 +260,7 @@ describe('gemini-cli-command', () => {
         port: 41242,
         uptime: null,
         searchCount: 0,
+        providerTaskCount: 0,
         lastError: null,
         exitCode: null,
         stdoutBuffer: [],
@@ -255,6 +286,7 @@ describe('gemini-cli-command', () => {
         port: 41242,
         uptime: null,
         searchCount: 0,
+        providerTaskCount: 0,
         lastError: null,
         exitCode: null,
         stdoutBuffer: [],
@@ -276,6 +308,7 @@ describe('gemini-cli-command', () => {
         port: 41242,
         uptime: null,
         searchCount: 0,
+        providerTaskCount: 0,
         lastError: null,
         exitCode: null,
         stdoutBuffer: [],
@@ -301,6 +334,7 @@ describe('gemini-cli-command', () => {
         port: 41242,
         uptime: null,
         searchCount: 0,
+        providerTaskCount: 0,
         lastError: null,
         exitCode: null,
         stdoutBuffer: [],
@@ -380,6 +414,7 @@ describe('gemini-cli-command', () => {
         port: 41242,
         uptime: 1000,
         searchCount: 5,
+        providerTaskCount: 0,
         lastError: null,
         exitCode: null,
         stdoutBuffer: [],
@@ -401,6 +436,7 @@ describe('gemini-cli-command', () => {
         port: 41242,
         uptime: null,
         searchCount: 0,
+        providerTaskCount: 0,
         lastError: null,
         exitCode: null,
         stdoutBuffer: [],

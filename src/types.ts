@@ -121,8 +121,10 @@ export interface A2AServerState {
   port: number;
   /** Uptime in milliseconds since server started, null if not running */
   uptime: number | null;
-  /** Total number of searches processed since session start */
+  /** Total number of searches processed since session start (search extension traffic) */
   searchCount: number;
+  /** Total number of provider tasks processed since session start (provider extension traffic) */
+  providerTaskCount: number;
   /** Most recent error encountered, null if no errors */
   lastError: SearchError | null;
   /** Exit code from child process, null if still running or not started */
@@ -130,7 +132,7 @@ export interface A2AServerState {
   /** Ring buffer of last 50 stdout lines for debugging */
   stdoutBuffer: string[];
   /** Ring buffer of last 50 stderr lines for debugging */
-  stderrBuffer: string[];
+  stderrBuffer: [];
 }
 
 /**

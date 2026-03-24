@@ -64,6 +64,7 @@ let serverState: A2AServerState = {
   port: A2A_PORT,
   uptime: null,
   searchCount: 0,
+  providerTaskCount: 0,
   lastError: null,
   exitCode: null,
   stdoutBuffer: [],
@@ -607,6 +608,15 @@ export function getSearchCount(): number {
 }
 
 /**
+ * Returns the current provider task count.
+ * 
+ * @returns Number of provider tasks processed since session start
+ */
+export function getProviderTaskCount(): number {
+  return serverState.providerTaskCount;
+}
+
+/**
  * Increments the search counter and triggers auto-restart at 1000.
  * 
  * When search count reaches 1000:
@@ -645,6 +655,47 @@ export async function incrementSearchCount(): Promise<void> {
 export function resetSearchCount(): void {
   updateState({ searchCount: 0 });
   log('Search count reset to 0');
+}
+
+/**
+ * Increments the provider task counter and triggers auto-restart at 1000.
+ * 
+ * When provider task count reaches 1000:
+ * 1. Calls stopServer() to gracefully shut down
+ * 2. Resets provider task count to 0
+ * 3. Calls startServer() to restart
+ * 
+ * @returns Promise that resolves after increment (and restart if needed)
+ */
+export async function incrementProviderTaskCount(): Promise<void> {
+  const newCount = serverState.providerTaskCount + 1;
+  updateState({ providerTaskCount: newCount });
+  log(`Provider task count incremented to ${newCount}`);
+
+  // Check if restart is needed
+  if (newCount >= SEARCH_COUNT_RESTART_THRESHOLD) {
+    log(`Provider task count reached ${SEARCH_COUNT_RESTART_THRESHOLD}, triggering restart`);
+    
+    // Stop the server
+    await stopServer();
+    
+    // Reset counter
+    updateState({ providerTaskCount: 0 });
+    
+    // Restart the server
+    await startServer();
+    
+    log('Server restarted with provider task count reset to 0');
+  }
+}
+
+/**
+ * Resets the provider task counter to 0 without restarting.
+ * Useful for manual resets or testing.
+ */
+export function resetProviderTaskCount(): void {
+  updateState({ providerTaskCount: 0 });
+  log('Provider task count reset to 0');
 }
 
 /**

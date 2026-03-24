@@ -447,7 +447,7 @@ describe('streamSimple', () => {
   });
 
   describe('Re-call Flow', () => {
-    it('should detect ToolResultMessage, call injectResult(), and resume streaming', async () => {
+    it('should detect ToolResultMessage, call injectResult(), and continue from injection stream without empty follow-up prompt', async () => {
       // Arrange
       const mockTaskId = 'task_replay';
       const mockContextId = 'ctx_replay';
@@ -476,16 +476,15 @@ describe('streamSimple', () => {
         metadata: { url: 'http://localhost:41242/', requestId: 'req_inject' },
       });
       
-      // Mock resumed stream after injection
-      const mockResumeEvents: ParsedA2AEvent[] = [
+      // Mock injection response stream with continuation content
+      const mockInjectionEvents: ParsedA2AEvent[] = [
         createTextEvent('Based on the search results'),
         createStateChangeEvent('completed', false, true),
       ];
       
       mockParseSSEStream.mockImplementation(async function* () {
-        // First call: injection response (empty)
-        // Second call: resumed stream
-        for (const event of mockResumeEvents) {
+        // Only called once for the injection stream - no follow-up sendMessageStream
+        for (const event of mockInjectionEvents) {
           yield event;
         }
       });
@@ -542,7 +541,9 @@ describe('streamSimple', () => {
         toolName: 'tools_search', // Prefix stripped
       });
       expect(mockClearPendingToolCalls).toHaveBeenCalledWith(mockTaskId, ['call_1']);
-      // Verify result was processed (text accumulated during resumed streaming)
+      // Verify no follow-up sendMessageStream with empty prompt is made
+      expect(mockSendMessageStream).not.toHaveBeenCalled();
+      // Verify result was processed
       expect(finalResult).toBeDefined();
     });
 

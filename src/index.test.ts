@@ -233,6 +233,8 @@ describe('extension load behavior', () => {
 
 describe('session_start handler integration', () => {
   beforeEach(() => {
+    vi.resetModules();
+
     // Set unique schema path for this test file to avoid race conditions
     process.env.PI_GEMINI_SCHEMA_PATH = schemaFilePath;
     

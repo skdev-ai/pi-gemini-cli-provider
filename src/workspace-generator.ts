@@ -13,7 +13,7 @@ const EXT_DIR = join(__dirname, '..'); // Go up from src/ to extension root
  * Provider workspace settings for A2A server.
  * Excludes native file/shell tools to force usage through MCP bridge.
  * google_web_search is not excluded (auto-approved for direct A2A use).
- * Includes MCP discovery server configuration for pi-gemini-cli-provider.
+ * Includes MCP discovery server configuration for tools.
  */
 const PROVIDER_WORKSPACE_SETTINGS = {
   excludeTools: [
@@ -36,7 +36,7 @@ const PROVIDER_WORKSPACE_SETTINGS = {
   ],
   folderTrust: true,
   mcpServers: {
-    'pi-gemini-cli-provider': {
+    tools: {
       command: 'node',
       args: [join(EXT_DIR, 'dist', 'mcp-bridge-server.js')],
     }
@@ -159,7 +159,7 @@ function generateSettingsContent(config?: WorkspaceConfig): string {
     folderTrust: true,
     ...(enableMcp && {
       mcpServers: {
-        'pi-gemini-cli-provider': {
+        tools: {
           command: 'node',
           args: [join(EXT_DIR, 'dist', 'mcp-bridge-server.js')],
         }
@@ -321,8 +321,8 @@ export function validateWorkspace(workspacePath: string, config?: WorkspaceConfi
     if (enableMcp) {
       if (!settings.mcpServers || typeof settings.mcpServers !== 'object') {
         errors.push('Missing mcpServers configuration');
-      } else if (!settings.mcpServers['pi-gemini-cli-provider']) {
-        errors.push('Missing pi-gemini-cli-provider MCP server configuration');
+      } else if (!settings.mcpServers.tools) {
+        errors.push('Missing tools MCP server configuration');
       }
     }
     

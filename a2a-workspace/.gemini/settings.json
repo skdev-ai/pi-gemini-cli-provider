@@ -21,7 +21,7 @@
   ],
   "folderTrust": true,
   "mcpServers": {
-    "pi-gemini-cli-provider": {
+    "tools": {
       "command": "node",
       "args": [
         "/home/skello/projects/pi-gemini-cli-provider/dist/mcp-bridge-server.js"

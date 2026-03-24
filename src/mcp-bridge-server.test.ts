@@ -68,7 +68,7 @@ function handleInitialize(request: JsonRpcRequest): JsonRpcResponse {
         tools: {},
       },
       serverInfo: {
-        name: 'pi-gemini-cli-provider',
+        name: 'tools',
         version: '0.1.0',
       },
     },
@@ -187,7 +187,7 @@ describe('MCP Bridge Server', () => {
             tools: {},
           },
           serverInfo: {
-            name: 'pi-gemini-cli-provider',
+            name: 'tools',
             version: '0.1.0',
           },
         },

@@ -123,9 +123,9 @@ describe('workspace-generator', () => {
       expect(settings.excludeTools).toEqual(__testing__.PROVIDER_WORKSPACE_SETTINGS.excludeTools);
       expect(settings.folderTrust).toBe(true);
       expect(settings.mcpServers).toBeDefined();
-      expect(settings.mcpServers['pi-gemini-cli-provider']).toBeDefined();
-      expect(settings.mcpServers['pi-gemini-cli-provider'].command).toBe('node');
-      expect(settings.mcpServers['pi-gemini-cli-provider'].args).toContainEqual(
+      expect(settings.mcpServers.tools).toBeDefined();
+      expect(settings.mcpServers.tools.command).toBe('node');
+      expect(settings.mcpServers.tools.args).toContainEqual(
         expect.stringContaining('mcp-bridge-server.js')
       );
     });

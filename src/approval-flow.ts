@@ -18,6 +18,8 @@ import type {
 } from './types.js';
 import { NATIVE_TOOL_ALLOWLIST } from './types.js';
 
+const MCP_SERVER_PREFIX = 'mcp_tools_';
+
 // ============================================================================
 // Tool Routing
 // ============================================================================
@@ -80,47 +82,47 @@ export function isNativeTool(toolName: string): toolName is NativeToolName {
 }
 
 /**
- * Checks if a tool name has the MCP prefix.
+ * Checks if a tool name has the MCP server prefix.
  * 
  * @param toolName - Tool name to check
- * @returns True if tool has mcp_ prefix
+ * @returns True if tool has mcp_tools_ prefix
  */
 export function isMcpTool(toolName: string): boolean {
-  return toolName.startsWith('mcp_');
+  return toolName.startsWith(MCP_SERVER_PREFIX);
 }
 
 /**
- * Strips the mcp_ prefix from a tool name for user-facing display.
+ * Strips the mcp_tools_ prefix from a tool name for user-facing display.
  * 
  * Examples:
- * - mcp_tools_read → tools_read
- * - mcp_gsd-test_test_echo → gsd-test_test_echo
+ * - mcp_tools_read → read
+ * - mcp_tools_write → write
  * - google_web_search → google_web_search (no change)
  * 
  * @param toolName - Fully qualified tool name
  * @returns User-facing display name
  */
 export function stripMcpPrefix(toolName: string): string {
-  if (toolName.startsWith('mcp_')) {
-    return toolName.slice('mcp_'.length);
+  if (toolName.startsWith(MCP_SERVER_PREFIX)) {
+    return toolName.slice(MCP_SERVER_PREFIX.length);
   }
   return toolName;
 }
 
 /**
- * Adds the mcp_ prefix to a user-facing tool name.
+ * Adds the mcp_tools_ prefix to a user-facing tool name.
  * 
  * Used when converting user-facing names back to fully qualified names.
  * 
  * @param displayName - User-facing tool name
- * @returns Fully qualified tool name with mcp_ prefix
+ * @returns Fully qualified tool name with mcp_tools_ prefix
  */
 export function addMcpPrefix(displayName: string): string {
   // Only add prefix if not already present
-  if (displayName.startsWith('mcp_')) {
+  if (displayName.startsWith(MCP_SERVER_PREFIX)) {
     return displayName;
   }
-  return `mcp_${displayName}`;
+  return `${MCP_SERVER_PREFIX}${displayName}`;
 }
 
 // ============================================================================

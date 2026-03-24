@@ -320,7 +320,7 @@ describe('streamSimple', () => {
           {
             type: 'toolCall',
             id: 'call_1',
-            name: 'tools_search',
+            name: 'search',
             arguments: { query: 'test' },
           },
         ],
@@ -491,7 +491,7 @@ describe('streamSimple', () => {
     expect(mockInjectResult).toHaveBeenCalledWith({
       taskId: mockTaskId,
       callId: 'call_1',
-      toolName: 'tools_search',
+      toolName: 'search',
       functionResponse: expect.anything(),
       signal: undefined,
     });

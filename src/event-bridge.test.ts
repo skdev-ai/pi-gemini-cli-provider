@@ -29,11 +29,6 @@ import {
 } from './event-bridge.js';
 import type { ParsedA2AEvent, ToolCallMetadata } from './types.js';
 
-// ============================================================================
-// Test Fixtures
-// ============================================================================
-
-/** Text content event fixture */
 function createTextEvent(text: string): ParsedA2AEvent {
   return {
     kind: 'text-content',
@@ -45,7 +40,6 @@ function createTextEvent(text: string): ParsedA2AEvent {
   };
 }
 
-/** Thought event fixture */
 function createThoughtEvent(text: string): ParsedA2AEvent {
   return {
     kind: 'thought',
@@ -57,7 +51,6 @@ function createThoughtEvent(text: string): ParsedA2AEvent {
   };
 }
 
-/** Tool call update event fixture */
 function createToolCallEvent(toolCall: ToolCallMetadata): ParsedA2AEvent {
   return {
     kind: 'tool-call-update',
@@ -86,7 +79,6 @@ function createToolCallEvent(toolCall: ToolCallMetadata): ParsedA2AEvent {
   };
 }
 
-/** State change event fixture */
 function createStateChangeEvent(state: 'submitted' | 'working' | 'input-required' | 'completed' | 'failed' | 'canceled' | 'rejected'): ParsedA2AEvent {
   return {
     kind: 'state-change',
@@ -97,7 +89,6 @@ function createStateChangeEvent(state: 'submitted' | 'working' | 'input-required
   };
 }
 
-/** Tool call confirmation event fixture */
 function createToolCallConfirmationEvent(): ParsedA2AEvent {
   return {
     kind: 'tool-call-confirmation',
@@ -108,14 +99,10 @@ function createToolCallConfirmationEvent(): ParsedA2AEvent {
   };
 }
 
-// ============================================================================
-// Partial Message Accumulation
-// ============================================================================
-
 describe('createPartialMessage', () => {
   it('should create empty partial message', () => {
     const partial = createPartialMessage();
-    
+
     expect(partial.text).toBe('');
     expect(partial.thinking).toBe('');
     expect(partial.toolCalls).toEqual([]);
@@ -125,115 +112,114 @@ describe('createPartialMessage', () => {
 describe('updatePartialMessage', () => {
   it('should accumulate text from text-content events', () => {
     let partial = createPartialMessage();
-    
+
     partial = updatePartialMessage(partial, createTextEvent('Hello '));
     expect(partial.text).toBe('Hello ');
-    
+
     partial = updatePartialMessage(partial, createTextEvent('World'));
     expect(partial.text).toBe('Hello World');
   });
 
   it('should accumulate thinking from thought events', () => {
     let partial = createPartialMessage();
-    
+
     partial = updatePartialMessage(partial, createThoughtEvent('Step 1: '));
     expect(partial.thinking).toBe('Step 1: ');
-    
+
     partial = updatePartialMessage(partial, createThoughtEvent('Step 2: analyze'));
     expect(partial.thinking).toBe('Step 1: Step 2: analyze');
   });
 
   it('should add tool calls from tool-call-update events', () => {
     let partial = createPartialMessage();
-    
+
     const toolCall1: ToolCallMetadata = {
       callId: 'call_1',
       name: 'mcp_tools_read',
       args: { path: 'test.md' },
       status: 'success',
     };
-    
+
     partial = updatePartialMessage(partial, createToolCallEvent(toolCall1));
     expect(partial.toolCalls).toHaveLength(1);
     expect(partial.toolCalls[0]).toEqual({
       id: 'call_1',
-      name: 'tools_read', // Prefix stripped
+      name: 'read',
       arguments: { path: 'test.md' },
     });
   });
 
   it('should update existing tool calls with same callId', () => {
     let partial = createPartialMessage();
-    
+
     const toolCall1: ToolCallMetadata = {
       callId: 'call_1',
       name: 'mcp_tools_read',
       args: { path: 'test.md' },
       status: 'validating',
     };
-    
+
     partial = updatePartialMessage(partial, createToolCallEvent(toolCall1));
-    
-    // Update with new status
+
     const toolCall2: ToolCallMetadata = {
       callId: 'call_1',
       name: 'mcp_tools_read',
       args: { path: 'test.md' },
       status: 'success',
     };
-    
+
     partial = updatePartialMessage(partial, createToolCallEvent(toolCall2));
-    
+
     expect(partial.toolCalls).toHaveLength(1);
   });
 
   it('should handle multiple different tool calls', () => {
     let partial = createPartialMessage();
-    
+
     const toolCall1: ToolCallMetadata = {
       callId: 'call_1',
       name: 'mcp_tools_read',
       args: { path: 'test.md' },
       status: 'success',
     };
-    
+
     const toolCall2: ToolCallMetadata = {
       callId: 'call_2',
       name: 'google_web_search',
       args: { query: 'test' },
       status: 'success',
     };
-    
+
     partial = updatePartialMessage(partial, createToolCallEvent(toolCall1));
     partial = updatePartialMessage(partial, createToolCallEvent(toolCall2));
-    
+
     expect(partial.toolCalls).toHaveLength(2);
-    expect(partial.toolCalls.map(c => c.id)).toEqual(['call_1', 'call_2']);
+    expect(partial.toolCalls.map((c) => c.id)).toEqual(['call_1', 'call_2']);
   });
 
   it('should ignore state-change events', () => {
     let partial = createPartialMessage();
     partial = updatePartialMessage(partial, createTextEvent('Text'));
-    
+
     const beforeState = { ...partial };
     partial = updatePartialMessage(partial, createStateChangeEvent('working'));
-    
+
     expect(partial).toEqual(beforeState);
   });
 
   it('should ignore tool-call-confirmation events', () => {
     let partial = createPartialMessage();
     partial = updatePartialMessage(partial, createTextEvent('Text'));
-    
+
     const beforeConfirm = { ...partial };
     partial = updatePartialMessage(partial, createToolCallConfirmationEvent());
-    
+
     expect(partial).toEqual(beforeConfirm);
   });
 
   it('should handle event with missing text gracefully', () => {
     let partial = createPartialMessage();
-    
+
     const eventWithoutText: ParsedA2AEvent = {
       kind: 'text-content',
       result: {
@@ -241,14 +227,14 @@ describe('updatePartialMessage', () => {
         status: { state: 'working', message: { parts: [] } },
       },
     };
-    
+
     partial = updatePartialMessage(partial, eventWithoutText);
     expect(partial.text).toBe('');
   });
 
   it('should handle tool-call-update event without toolCall metadata', () => {
     let partial = createPartialMessage();
-    
+
     const eventWithoutToolCall: ParsedA2AEvent = {
       kind: 'tool-call-update',
       result: {
@@ -256,7 +242,7 @@ describe('updatePartialMessage', () => {
         status: { state: 'working', message: { parts: [] } },
       },
     };
-    
+
     partial = updatePartialMessage(partial, eventWithoutToolCall);
     expect(partial.toolCalls).toHaveLength(0);
   });
@@ -269,9 +255,9 @@ describe('accumulateEvents', () => {
       createTextEvent('Answer: '),
       createTextEvent('42'),
     ];
-    
+
     const partial = accumulateEvents(events);
-    
+
     expect(partial.thinking).toBe('Thinking...');
     expect(partial.text).toBe('Answer: 42');
     expect(partial.toolCalls).toHaveLength(0);
@@ -284,19 +270,19 @@ describe('accumulateEvents', () => {
       args: {},
       status: 'success',
     };
-    
+
     const events: ParsedA2AEvent[] = [
       createThoughtEvent('Let me search...'),
       createToolCallEvent(toolCall),
       createTextEvent('Found the information.'),
     ];
-    
+
     const partial = accumulateEvents(events);
-    
+
     expect(partial.thinking).toBe('Let me search...');
     expect(partial.text).toBe('Found the information.');
     expect(partial.toolCalls).toHaveLength(1);
-    expect(partial.toolCalls[0].name).toBe('tools_read');
+    expect(partial.toolCalls[0].name).toBe('read');
   });
 
   it('should handle empty event array', () => {
@@ -307,10 +293,6 @@ describe('accumulateEvents', () => {
   });
 });
 
-// ============================================================================
-// Tool Call Conversion
-// ============================================================================
-
 describe('convertToolCallToPi', () => {
   it('should convert MCP tool call with prefix stripping', () => {
     const toolCall: ToolCallMetadata = {
@@ -319,12 +301,12 @@ describe('convertToolCallToPi', () => {
       args: { path: 'test.md' },
       status: 'success',
     };
-    
+
     const piCall = convertToolCallToPi(toolCall);
-    
+
     expect(piCall).toEqual({
       id: 'call_1',
-      name: 'tools_read',
+      name: 'read',
       arguments: { path: 'test.md' },
     });
   });
@@ -336,9 +318,9 @@ describe('convertToolCallToPi', () => {
       args: { query: 'test' },
       status: 'success',
     };
-    
+
     const piCall = convertToolCallToPi(toolCall);
-    
+
     expect(piCall).toEqual({
       id: 'call_1',
       name: 'google_web_search',
@@ -346,17 +328,17 @@ describe('convertToolCallToPi', () => {
     });
   });
 
-  it('should handle nested MCP prefix (mcp_tools_gsd-test_test_echo)', () => {
+  it('should handle nested provider MCP prefix (mcp_tools_gsd-test_test_echo)', () => {
     const toolCall: ToolCallMetadata = {
       callId: 'call_1',
       name: 'mcp_tools_gsd-test_test_echo',
       args: { message: 'test' },
       status: 'success',
     };
-    
+
     const piCall = convertToolCallToPi(toolCall);
-    
-    expect(piCall.name).toBe('tools_gsd-test_test_echo');
+
+    expect(piCall.name).toBe('gsd-test_test_echo');
   });
 });
 
@@ -364,23 +346,23 @@ describe('convertToolCallsToPi', () => {
   it('should convert array of tool calls', () => {
     const toolCalls: ToolCallMetadata[] = [
       {
-      callId: 'call_1',
-      name: 'mcp_tools_read',
-      args: {},
+        callId: 'call_1',
+        name: 'mcp_tools_read',
+        args: {},
         status: 'success',
       },
       {
-      callId: 'call_2',
-      name: 'google_web_search',
-      args: {},
+        callId: 'call_2',
+        name: 'google_web_search',
+        args: {},
         status: 'success',
       },
     ];
-    
+
     const piCalls = convertToolCallsToPi(toolCalls);
-    
+
     expect(piCalls).toHaveLength(2);
-    expect(piCalls[0].name).toBe('tools_read');
+    expect(piCalls[0].name).toBe('read');
     expect(piCalls[1].name).toBe('google_web_search');
   });
 
@@ -390,15 +372,11 @@ describe('convertToolCallsToPi', () => {
   });
 });
 
-// ============================================================================
-// Event Translation
-// ============================================================================
-
 describe('translateTextEvent', () => {
   it('should translate text-content event to pi event', () => {
     const a2aEvent = createTextEvent('Hello World');
     const piEvent = translateTextEvent(a2aEvent);
-    
+
     expect(piEvent.type).toBe('text');
     expect(piEvent.content).toBe('Hello World');
   });
@@ -413,7 +391,7 @@ describe('translateThoughtEvent', () => {
   it('should translate thought event to pi event', () => {
     const a2aEvent = createThoughtEvent('Let me think...');
     const piEvent = translateThoughtEvent(a2aEvent);
-    
+
     expect(piEvent.type).toBe('thinking');
     expect(piEvent.content).toBe('Let me think...');
   });
@@ -434,11 +412,11 @@ describe('translateToolCallEvent', () => {
     };
     const a2aEvent = createToolCallEvent(toolCall);
     const piEvent = translateToolCallEvent(a2aEvent);
-    
+
     expect(piEvent.type).toBe('toolCall');
     expect(piEvent.content).toEqual({
       id: 'call_1',
-      name: 'tools_read',
+      name: 'read',
       arguments: { path: 'test.md' },
     });
   });
@@ -464,7 +442,7 @@ describe('translateEvent', () => {
   it('should translate text-content event', () => {
     const a2aEvent = createTextEvent('Hello');
     const piEvents = translateEvent(a2aEvent);
-    
+
     expect(piEvents).toHaveLength(1);
     expect(piEvents[0].type).toBe('text');
   });
@@ -472,7 +450,7 @@ describe('translateEvent', () => {
   it('should translate thought event', () => {
     const a2aEvent = createThoughtEvent('Thinking');
     const piEvents = translateEvent(a2aEvent);
-    
+
     expect(piEvents).toHaveLength(1);
     expect(piEvents[0].type).toBe('thinking');
   });
@@ -486,7 +464,7 @@ describe('translateEvent', () => {
     };
     const a2aEvent = createToolCallEvent(toolCall);
     const piEvents = translateEvent(a2aEvent);
-    
+
     expect(piEvents).toHaveLength(1);
     expect(piEvents[0].type).toBe('toolCall');
   });
@@ -494,14 +472,14 @@ describe('translateEvent', () => {
   it('should return empty array for state-change event', () => {
     const a2aEvent = createStateChangeEvent('working');
     const piEvents = translateEvent(a2aEvent);
-    
+
     expect(piEvents).toHaveLength(0);
   });
 
   it('should return empty array for tool-call-confirmation event', () => {
     const a2aEvent = createToolCallConfirmationEvent();
     const piEvents = translateEvent(a2aEvent);
-    
+
     expect(piEvents).toHaveLength(0);
   });
 
@@ -514,7 +492,7 @@ describe('translateEvent', () => {
       },
     };
     const piEvents = translateEvent(unknownEvent);
-    
+
     expect(piEvents).toHaveLength(0);
   });
 
@@ -527,7 +505,7 @@ describe('translateEvent', () => {
       },
     };
     const piEvents = translateEvent(malformedEvent);
-    
+
     expect(piEvents).toHaveLength(0);
   });
 });
@@ -540,17 +518,17 @@ describe('translateEvents', () => {
       args: {},
       status: 'success',
     };
-    
+
     const events: ParsedA2AEvent[] = [
       createThoughtEvent('Thinking'),
       createTextEvent('Answer'),
       createToolCallEvent(toolCall),
     ];
-    
+
     const piEvents = translateEvents(events);
-    
+
     expect(piEvents).toHaveLength(3);
-    expect(piEvents.map(e => e.type)).toEqual(['thinking', 'text', 'toolCall']);
+    expect(piEvents.map((e) => e.type)).toEqual(['thinking', 'text', 'toolCall']);
   });
 
   it('should skip non-translatable events', () => {
@@ -559,9 +537,9 @@ describe('translateEvents', () => {
       createStateChangeEvent('working'),
       createTextEvent('Answer'),
     ];
-    
+
     const piEvents = translateEvents(events);
-    
+
     expect(piEvents).toHaveLength(2);
   });
 
@@ -571,22 +549,16 @@ describe('translateEvents', () => {
   });
 });
 
-// ============================================================================
-// Message Extraction
-// ============================================================================
-
 describe('extractCompleteMessage', () => {
   it('should extract complete message from partial', () => {
     const partial = {
       text: 'Hello World',
       thinking: 'Let me think...',
-      toolCalls: [
-        { id: 'call_1', name: 'tools_read', arguments: {} },
-      ],
+      toolCalls: [{ id: 'call_1', name: 'read', arguments: {} }],
     };
-    
+
     const complete = extractCompleteMessage(partial);
-    
+
     expect(complete).toEqual(partial);
   });
 });
@@ -625,15 +597,11 @@ describe('hasToolCalls', () => {
   });
 });
 
-// ============================================================================
-// Validation
-// ============================================================================
-
 describe('validateA2AEvent', () => {
   it('should return valid for text-content event with text', () => {
     const event = createTextEvent('Hello');
     const validation = validateA2AEvent(event);
-    
+
     expect(validation.isValid).toBe(true);
     expect(validation.error).toBeUndefined();
   });
@@ -647,7 +615,7 @@ describe('validateA2AEvent', () => {
       },
     };
     const validation = validateA2AEvent(event);
-    
+
     expect(validation.isValid).toBe(false);
     expect(validation.error).toContain('text');
   });
@@ -655,7 +623,7 @@ describe('validateA2AEvent', () => {
   it('should return valid for thought event with text', () => {
     const event = createThoughtEvent('Thinking');
     const validation = validateA2AEvent(event);
-    
+
     expect(validation.isValid).toBe(true);
   });
 
@@ -668,7 +636,7 @@ describe('validateA2AEvent', () => {
       },
     };
     const validation = validateA2AEvent(event);
-    
+
     expect(validation.isValid).toBe(false);
     expect(validation.error).toContain('text');
   });
@@ -682,7 +650,7 @@ describe('validateA2AEvent', () => {
     };
     const event = createToolCallEvent(toolCall);
     const validation = validateA2AEvent(event);
-    
+
     expect(validation.isValid).toBe(true);
   });
 
@@ -695,7 +663,7 @@ describe('validateA2AEvent', () => {
       },
     };
     const validation = validateA2AEvent(event);
-    
+
     expect(validation.isValid).toBe(false);
     expect(validation.error).toContain('toolCall');
   });
@@ -709,7 +677,7 @@ describe('validateA2AEvent', () => {
       },
     };
     const validation = validateA2AEvent(event);
-    
+
     expect(validation.isValid).toBe(false);
     expect(validation.error).toContain('Unknown event kind');
   });
@@ -719,7 +687,7 @@ describe('validatePartialMessage', () => {
   it('should return valid for message with text', () => {
     const partial = { text: 'Hello', thinking: '', toolCalls: [] };
     const validation = validatePartialMessage(partial);
-    
+
     expect(validation.isValid).toBe(true);
     expect(validation.errors).toHaveLength(0);
   });
@@ -727,11 +695,9 @@ describe('validatePartialMessage', () => {
   it('should return invalid for empty message', () => {
     const partial = { text: '', thinking: '', toolCalls: [] };
     const validation = validatePartialMessage(partial);
-    
+
     expect(validation.isValid).toBe(false);
-    expect(validation.errors).toContainEqual(
-      expect.stringContaining('no content')
-    );
+    expect(validation.errors).toContainEqual(expect.stringContaining('no content'));
   });
 
   it('should return invalid for tool call missing callId', () => {
@@ -741,11 +707,9 @@ describe('validatePartialMessage', () => {
       toolCalls: [{ name: 'read', arguments: {} } as any],
     };
     const validation = validatePartialMessage(partial);
-    
+
     expect(validation.isValid).toBe(false);
-    expect(validation.errors).toContainEqual(
-      expect.stringContaining('missing callId')
-    );
+    expect(validation.errors).toContainEqual(expect.stringContaining('missing callId'));
   });
 
   it('should return invalid for tool call missing name', () => {
@@ -755,11 +719,9 @@ describe('validatePartialMessage', () => {
       toolCalls: [{ id: '1', arguments: {} } as any],
     };
     const validation = validatePartialMessage(partial);
-    
+
     expect(validation.isValid).toBe(false);
-    expect(validation.errors).toContainEqual(
-      expect.stringContaining('missing name')
-    );
+    expect(validation.errors).toContainEqual(expect.stringContaining('missing name'));
   });
 
   it('should return invalid for tool call missing args', () => {
@@ -769,31 +731,23 @@ describe('validatePartialMessage', () => {
       toolCalls: [{ id: '1', name: 'read' } as any],
     };
     const validation = validatePartialMessage(partial);
-    
+
     expect(validation.isValid).toBe(false);
-    expect(validation.errors).toContainEqual(
-      expect.stringContaining('missing args')
-    );
+    expect(validation.errors).toContainEqual(expect.stringContaining('missing args'));
   });
 
   it('should return valid for message with valid tool calls', () => {
     const partial = {
       text: '',
       thinking: '',
-      toolCalls: [
-        { id: '1', name: 'read', arguments: { path: 'test.md' } },
-      ],
+      toolCalls: [{ id: '1', name: 'read', arguments: { path: 'test.md' } }],
     };
     const validation = validatePartialMessage(partial);
-    
+
     expect(validation.isValid).toBe(true);
     expect(validation.errors).toHaveLength(0);
   });
 });
-
-// ============================================================================
-// Unified Rendering (MCP + Native)
-// ============================================================================
 
 describe('unified rendering', () => {
   it('should render MCP and native tool calls through same format', () => {
@@ -803,29 +757,26 @@ describe('unified rendering', () => {
       args: { path: 'test.md' },
       status: 'success',
     };
-    
+
     const nativeToolCall: ToolCallMetadata = {
       callId: 'native_1',
       name: 'google_web_search',
       args: { query: 'test' },
       status: 'success',
     };
-    
-    // Convert both to pi format
+
     const mcpPiCall = convertToolCallToPi(mcpToolCall);
     const nativePiCall = convertToolCallToPi(nativeToolCall);
-    
-    // Both should have same structure
+
     expect(mcpPiCall).toHaveProperty('id');
     expect(mcpPiCall).toHaveProperty('name');
     expect(mcpPiCall).toHaveProperty('arguments');
-    
+
     expect(nativePiCall).toHaveProperty('id');
     expect(nativePiCall).toHaveProperty('name');
     expect(nativePiCall).toHaveProperty('arguments');
-    
-    // MCP prefix should be stripped, native should be preserved
-    expect(mcpPiCall.name).toBe('tools_read');
+
+    expect(mcpPiCall.name).toBe('read');
     expect(nativePiCall.name).toBe('google_web_search');
   });
 
@@ -836,22 +787,22 @@ describe('unified rendering', () => {
       args: {},
       status: 'success',
     };
-    
+
     const nativeToolCall: ToolCallMetadata = {
       callId: 'native_1',
       name: 'web_fetch',
       args: {},
       status: 'success',
     };
-    
+
     const events: ParsedA2AEvent[] = [
       createToolCallEvent(mcpToolCall),
       createToolCallEvent(nativeToolCall),
     ];
-    
+
     const partial = accumulateEvents(events);
-    
+
     expect(partial.toolCalls).toHaveLength(2);
-    expect(partial.toolCalls.map(c => c.name)).toEqual(['tools_read', 'web_fetch']);
+    expect(partial.toolCalls.map((c) => c.name)).toEqual(['read', 'web_fetch']);
   });
 });

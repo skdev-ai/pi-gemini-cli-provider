@@ -34,9 +34,9 @@ import type { ToolCallMetadata, ExtractedToolResult } from './types.js';
 
 /** MCP tool call fixture */
 const mcpToolCall: ToolCallMetadata = {
-  callId: 'mcp_gsd-test_test_echo_123',
-  name: 'mcp_gsd-test_test_echo',
-  args: { message: 'test' },
+  callId: 'mcp_tools_read_123',
+  name: 'mcp_tools_read',
+  args: { path: 'README.md' },
   status: 'success',
 };
 
@@ -58,11 +58,11 @@ const nativeToolCallFetch: ToolCallMetadata = {
 
 /** Extracted result fixture for MCP tool */
 const mcpResult: ExtractedToolResult = {
-  toolCallId: 'mcp_gsd-test_test_echo_123',
-  toolName: 'gsd-test_test_echo',
+  toolCallId: 'mcp_tools_read_123',
+  toolName: 'read',
   payload: {
-    name: 'gsd-test_test_echo',
-    response: { output: 'Echo: test' },
+    name: 'read',
+    response: { content: 'file contents' },
   },
 };
 
@@ -93,17 +93,17 @@ const nativeResultFetch: ExtractedToolResult = {
 describe('classifyToolRouting', () => {
   it('should classify MCP tool with prefix stripping', () => {
     const decision = classifyToolRouting(mcpToolCall);
-    
+
     expect(decision.routing).toBe('mcp');
-    expect(decision.displayName).toBe('gsd-test_test_echo');
+    expect(decision.displayName).toBe('read');
     expect(decision.autoApprove).toBe(false);
     expect(decision.reason).toContain('MCP tool');
-    expect(decision.reason).toContain('gsd-test_test_echo');
+    expect(decision.reason).toContain('read');
   });
 
   it('should classify native tool (google_web_search) as auto-approved', () => {
     const decision = classifyToolRouting(nativeToolCallSearch);
-    
+
     expect(decision.routing).toBe('native');
     expect(decision.displayName).toBe('google_web_search');
     expect(decision.autoApprove).toBe(true);
@@ -112,7 +112,7 @@ describe('classifyToolRouting', () => {
 
   it('should classify native tool (web_fetch) as auto-approved', () => {
     const decision = classifyToolRouting(nativeToolCallFetch);
-    
+
     expect(decision.routing).toBe('native');
     expect(decision.displayName).toBe('web_fetch');
     expect(decision.autoApprove).toBe(true);
@@ -126,14 +126,14 @@ describe('classifyToolRouting', () => {
       status: 'success',
     };
     const decision = classifyToolRouting(unknownTool);
-    
+
     expect(decision.routing).toBe('mcp');
     expect(decision.displayName).toBe('custom_tool');
     expect(decision.autoApprove).toBe(false);
     expect(decision.reason).toContain('defaulted to MCP routing');
   });
 
-  it('should handle MCP tool with nested prefix (mcp_gsd-test_test_echo)', () => {
+  it('should default non-provider-prefixed MCP-like tools to unknown MCP routing without stripping', () => {
     const nestedMcpTool: ToolCallMetadata = {
       callId: 'mcp_gsd-test_test_echo_123',
       name: 'mcp_gsd-test_test_echo',
@@ -141,10 +141,11 @@ describe('classifyToolRouting', () => {
       status: 'success',
     };
     const decision = classifyToolRouting(nestedMcpTool);
-    
+
     expect(decision.routing).toBe('mcp');
-    expect(decision.displayName).toBe('gsd-test_test_echo');
+    expect(decision.displayName).toBe('mcp_gsd-test_test_echo');
     expect(decision.autoApprove).toBe(false);
+    expect(decision.reason).toContain('defaulted to MCP routing');
   });
 });
 
@@ -168,9 +169,9 @@ describe('isNativeTool', () => {
 });
 
 describe('isMcpTool', () => {
-  it('should return true for mcp_ prefix', () => {
+  it('should return true only for mcp_tools_ prefix', () => {
     expect(isMcpTool('mcp_tools_read')).toBe(true);
-    expect(isMcpTool('mcp_gsd-test_test_echo')).toBe(true);
+    expect(isMcpTool('mcp_tools_write')).toBe(true);
   });
 
   it('should return false for native tools', () => {
@@ -178,19 +179,20 @@ describe('isMcpTool', () => {
     expect(isMcpTool('web_fetch')).toBe(false);
   });
 
-  it('should return false for tools without prefix', () => {
+  it('should return false for tools without provider MCP prefix', () => {
     expect(isMcpTool('custom_tool')).toBe(false);
+    expect(isMcpTool('mcp_gsd-test_test_echo')).toBe(false);
   });
 });
 
 describe('stripMcpPrefix', () => {
-  it('should strip mcp_ prefix', () => {
-    expect(stripMcpPrefix('mcp_tools_read')).toBe('tools_read');
-    expect(stripMcpPrefix('mcp_tools_write')).toBe('tools_write');
+  it('should strip mcp_tools_ prefix', () => {
+    expect(stripMcpPrefix('mcp_tools_read')).toBe('read');
+    expect(stripMcpPrefix('mcp_tools_write')).toBe('write');
   });
 
-  it('should strip mcp_ prefix with nested path', () => {
-    expect(stripMcpPrefix('mcp_gsd-test_test_echo')).toBe('gsd-test_test_echo');
+  it('should not strip non-provider MCP-like names', () => {
+    expect(stripMcpPrefix('mcp_gsd-test_test_echo')).toBe('mcp_gsd-test_test_echo');
   });
 
   it('should not modify native tool names', () => {
@@ -204,17 +206,17 @@ describe('stripMcpPrefix', () => {
 });
 
 describe('addMcpPrefix', () => {
-  it('should add mcp_ prefix to plain name', () => {
-    expect(addMcpPrefix('tools_read')).toBe('mcp_tools_read');
-    expect(addMcpPrefix('tools_write')).toBe('mcp_tools_write');
+  it('should add mcp_tools_ prefix to plain name', () => {
+    expect(addMcpPrefix('read')).toBe('mcp_tools_read');
+    expect(addMcpPrefix('write')).toBe('mcp_tools_write');
   });
 
   it('should not double-prefix already prefixed names', () => {
     expect(addMcpPrefix('mcp_tools_read')).toBe('mcp_tools_read');
   });
 
-  it('should prefix nested path names', () => {
-    expect(addMcpPrefix('gsd-test_test_echo')).toBe('mcp_gsd-test_test_echo');
+  it('should prefix other display names with provider MCP prefix', () => {
+    expect(addMcpPrefix('gsd-test_test_echo')).toBe('mcp_tools_gsd-test_test_echo');
   });
 });
 
@@ -225,12 +227,12 @@ describe('addMcpPrefix', () => {
 describe('buildReinjectionWorkList', () => {
   it('should build work list for single MCP tool', () => {
     const workItems = buildReinjectionWorkList([mcpToolCall], [mcpResult]);
-    
+
     expect(workItems).toHaveLength(1);
     expect(workItems[0]).toEqual({
-      callId: 'mcp_gsd-test_test_echo_123',
-      toolName: 'gsd-test_test_echo',
-      args: { message: 'test' },
+      callId: 'mcp_tools_read_123',
+      toolName: 'read',
+      args: { path: 'README.md' },
       result: mcpResult.payload,
       routing: 'mcp',
     });
@@ -241,7 +243,7 @@ describe('buildReinjectionWorkList', () => {
       [nativeToolCallSearch],
       [nativeResultSearch]
     );
-    
+
     expect(workItems).toHaveLength(1);
     expect(workItems[0]).toEqual({
       callId: 'google_web_search_456',
@@ -255,9 +257,9 @@ describe('buildReinjectionWorkList', () => {
   it('should build work list for mixed MCP and native tools', () => {
     const toolCalls = [mcpToolCall, nativeToolCallSearch];
     const results = [mcpResult, nativeResultSearch];
-    
+
     const workItems = buildReinjectionWorkList(toolCalls, results);
-    
+
     expect(workItems).toHaveLength(2);
     expect(workItems[0].routing).toBe('mcp');
     expect(workItems[1].routing).toBe('native');
@@ -266,24 +268,24 @@ describe('buildReinjectionWorkList', () => {
   it('should preserve order of pending tool calls', () => {
     const toolCalls = [nativeToolCallFetch, mcpToolCall, nativeToolCallSearch];
     const results = [nativeResultFetch, mcpResult, nativeResultSearch];
-    
+
     const workItems = buildReinjectionWorkList(toolCalls, results);
-    
+
     expect(workItems.map(w => w.callId)).toEqual([
       'web_fetch_789',
-      'mcp_gsd-test_test_echo_123',
+      'mcp_tools_read_123',
       'google_web_search_456',
     ]);
   });
 
   it('should skip tool calls without corresponding results', () => {
     const toolCalls = [mcpToolCall, nativeToolCallSearch];
-    const results = [mcpResult]; // Missing result for native tool
-    
+    const results = [mcpResult];
+
     const workItems = buildReinjectionWorkList(toolCalls, results);
-    
+
     expect(workItems).toHaveLength(1);
-    expect(workItems[0].callId).toBe('mcp_gsd-test_test_echo_123');
+    expect(workItems[0].callId).toBe('mcp_tools_read_123');
   });
 
   it('should handle empty tool calls', () => {
@@ -296,9 +298,9 @@ describe('filterWorkItemsByRouting', () => {
   const mixedWorkItems = [
     {
       callId: 'call_1',
-      toolName: 'gsd-test_test_echo',
+      toolName: 'read',
       args: {},
-      result: { name: 'gsd-test_test_echo', response: {} },
+      result: { name: 'read', response: {} },
       routing: 'mcp' as const,
     },
     {
@@ -334,9 +336,9 @@ describe('getMcpWorkItems', () => {
     }> = [
       {
         callId: 'mcp_1',
-        toolName: 'gsd-test_test_echo',
+        toolName: 'read',
         args: {},
-        result: { name: 'gsd-test_test_echo', response: {} },
+        result: { name: 'read', response: {} },
         routing: 'mcp',
       },
       {
@@ -347,7 +349,7 @@ describe('getMcpWorkItems', () => {
         routing: 'native',
       },
     ];
-    
+
     const mcpItems = getMcpWorkItems(mixedWorkItems);
     expect(mcpItems).toHaveLength(1);
     expect(mcpItems[0].routing).toBe('mcp');
@@ -365,9 +367,9 @@ describe('getNativeWorkItems', () => {
     }> = [
       {
         callId: 'mcp_1',
-        toolName: 'gsd-test_test_echo',
+        toolName: 'read',
         args: {},
-        result: { name: 'gsd-test_test_echo', response: {} },
+        result: { name: 'read', response: {} },
         routing: 'mcp',
       },
       {
@@ -378,7 +380,7 @@ describe('getNativeWorkItems', () => {
         routing: 'native',
       },
     ];
-    
+
     const nativeItems = getNativeWorkItems(mixedWorkItems);
     expect(nativeItems).toHaveLength(1);
     expect(nativeItems[0].routing).toBe('native');
@@ -394,13 +396,13 @@ describe('determineStopReason', () => {
     const mcpWorkItems = [
       {
         callId: 'mcp_1',
-        toolName: 'gsd-test_test_echo',
+        toolName: 'read',
         args: {},
-        result: { name: 'gsd-test_test_echo', response: {} },
+        result: { name: 'read', response: {} },
         routing: 'mcp' as const,
       },
     ];
-    
+
     expect(determineStopReason(mcpWorkItems)).toBe('toolUse');
   });
 
@@ -414,7 +416,7 @@ describe('determineStopReason', () => {
         routing: 'native' as const,
       },
     ];
-    
+
     expect(determineStopReason(nativeWorkItems)).toBeUndefined();
   });
 
@@ -433,13 +435,13 @@ describe('determineStopReason', () => {
       },
       {
         callId: 'mcp_1',
-        toolName: 'gsd-test_test_echo',
+        toolName: 'read',
         args: {},
-        result: { name: 'gsd-test_test_echo', response: {} },
+        result: { name: 'read', response: {} },
         routing: 'mcp' as const,
       },
     ];
-    
+
     expect(determineStopReason(mixedWorkItems)).toBe('toolUse');
   });
 });
@@ -449,13 +451,13 @@ describe('hasApprovalRequired', () => {
     const workItems = [
       {
         callId: 'mcp_1',
-        toolName: 'gsd-test_test_echo',
+        toolName: 'read',
         args: {},
-        result: { name: 'gsd-test_test_echo', response: {} },
+        result: { name: 'read', response: {} },
         routing: 'mcp' as const,
       },
     ];
-    
+
     expect(hasApprovalRequired(workItems)).toBe(true);
   });
 
@@ -469,7 +471,7 @@ describe('hasApprovalRequired', () => {
         routing: 'native' as const,
       },
     ];
-    
+
     expect(hasApprovalRequired(workItems)).toBe(false);
   });
 
@@ -496,7 +498,7 @@ describe('allAutoApproved', () => {
         routing: 'native' as const,
       },
     ];
-    
+
     expect(allAutoApproved(workItems)).toBe(true);
   });
 
@@ -511,13 +513,13 @@ describe('allAutoApproved', () => {
       },
       {
         callId: 'mcp_1',
-        toolName: 'gsd-test_test_echo',
+        toolName: 'read',
         args: {},
-        result: { name: 'gsd-test_test_echo', response: {} },
+        result: { name: 'read', response: {} },
         routing: 'mcp' as const,
       },
     ];
-    
+
     expect(allAutoApproved(workItems)).toBe(false);
   });
 
@@ -534,19 +536,19 @@ describe('validateReinjectionCompleteness', () => {
   it('should return valid when all tool calls have results', () => {
     const toolCalls = [mcpToolCall, nativeToolCallSearch];
     const results = [mcpResult, nativeResultSearch];
-    
+
     const validation = validateReinjectionCompleteness(toolCalls, results);
-    
+
     expect(validation.isValid).toBe(true);
     expect(validation.missingCallIds).toHaveLength(0);
   });
 
   it('should return invalid with missing callIds', () => {
     const toolCalls = [mcpToolCall, nativeToolCallSearch];
-    const results = [mcpResult]; // Missing native result
-    
+    const results = [mcpResult];
+
     const validation = validateReinjectionCompleteness(toolCalls, results);
-    
+
     expect(validation.isValid).toBe(false);
     expect(validation.missingCallIds).toEqual(['google_web_search_456']);
   });
@@ -560,12 +562,12 @@ describe('validateReinjectionCompleteness', () => {
 describe('validateToolResultPayload', () => {
   it('should return valid for well-formed payload', () => {
     const payload = {
-      name: 'gsd-test_test_echo',
-      response: { output: 'echo result' },
+      name: 'read',
+      response: { content: 'file contents' },
     };
-    
+
     const validation = validateToolResultPayload(payload);
-    
+
     expect(validation.isValid).toBe(true);
     expect(validation.error).toBeUndefined();
   });
@@ -574,39 +576,39 @@ describe('validateToolResultPayload', () => {
     const payload = {
       response: { output: 'echo result' },
     };
-    
+
     const validation = validateToolResultPayload(payload as any);
-    
+
     expect(validation.isValid).toBe(false);
     expect(validation.error).toContain('name');
   });
 
   it('should return invalid for missing response field', () => {
     const payload = {
-      name: 'gsd-test_test_echo',
+      name: 'read',
     };
-    
+
     const validation = validateToolResultPayload(payload as any);
-    
+
     expect(validation.isValid).toBe(false);
     expect(validation.error).toContain('response');
   });
 
   it('should return invalid for undefined response', () => {
     const payload = {
-      name: 'gsd-test_test_echo',
+      name: 'read',
       response: undefined,
     };
-    
+
     const validation = validateToolResultPayload(payload as any);
-    
+
     expect(validation.isValid).toBe(false);
     expect(validation.error).toContain('response');
   });
 
   it('should return invalid for non-object payload', () => {
     const validation = validateToolResultPayload('string' as any);
-    
+
     expect(validation.isValid).toBe(false);
     expect(validation.error).toContain('object');
   });
@@ -619,23 +621,23 @@ describe('validateToolResultPayload', () => {
 describe('edge cases', () => {
   it('should handle tool call with empty args', () => {
     const toolCall: ToolCallMetadata = {
-      callId: 'mcp_gsd-test_test_echo_123',
-      name: 'mcp_gsd-test_test_echo',
+      callId: 'mcp_tools_read_123',
+      name: 'mcp_tools_read',
       args: {},
       status: 'success',
     };
-    
+
     const decision = classifyToolRouting(toolCall);
     expect(decision.routing).toBe('mcp');
-    expect(decision.displayName).toBe('gsd-test_test_echo');
+    expect(decision.displayName).toBe('read');
   });
 
   it('should handle result with complex response payload', () => {
     const complexResult: ExtractedToolResult = {
       toolCallId: 'test_123',
-      toolName: 'gsd-test_test_echo',
+      toolName: 'read',
       payload: {
-        name: 'gsd-test_test_echo',
+        name: 'read',
         response: {
           output: 'text',
           metadata: { size: 1024, type: 'file' },
@@ -643,22 +645,22 @@ describe('edge cases', () => {
         },
       },
     };
-    
+
     const validation = validateToolResultPayload(complexResult.payload);
     expect(validation.isValid).toBe(true);
   });
 
-  it('should handle tool name that looks like MCP but is not', () => {
+  it('should leave non-provider MCP-like tool names unchanged', () => {
     const toolCall: ToolCallMetadata = {
       callId: 'test_123',
       name: 'mcp_fake_tool',
       args: {},
       status: 'success',
     };
-    
+
     const decision = classifyToolRouting(toolCall);
-    // Should still be classified as MCP (starts with mcp_)
     expect(decision.routing).toBe('mcp');
-    expect(decision.displayName).toBe('fake_tool');
+    expect(decision.displayName).toBe('mcp_fake_tool');
+    expect(decision.reason).toContain('defaulted to MCP routing');
   });
 });

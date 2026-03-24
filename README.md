@@ -148,7 +148,7 @@ Provider workspace location:
 ```
 
 Configuration includes:
-- Restrictive `excludeTools` denylist (only `google_web_search` allowed)
+- Restrictive `excludeTools` denylist (blocks native file/shell tools like `read_file`, `write_file`, `run_shell_command` to force usage through MCP; `google_web_search` is not excluded and remains auto-approved)
 - MCP discovery server configuration
 - Warning comment about denylist risks
 

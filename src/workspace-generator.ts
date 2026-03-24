@@ -11,7 +11,8 @@ const EXT_DIR = join(__dirname, '..'); // Go up from src/ to extension root
 
 /**
  * Provider workspace settings for A2A server.
- * Excludes all tools except google_web_search as of v0.34.0.
+ * Excludes native file/shell tools to force usage through MCP bridge.
+ * google_web_search is not excluded (auto-approved for direct A2A use).
  * Includes MCP discovery server configuration for pi-gemini-cli-provider.
  */
 const PROVIDER_WORKSPACE_SETTINGS = {

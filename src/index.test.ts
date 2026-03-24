@@ -21,6 +21,8 @@ function createMockPi(tools: any[] = []) {
   return {
     getAllTools: () => tools,
     on: () => {}, // Will be spied on
+    registerProvider: () => {}, // Mock provider registration
+    registerCommand: () => {}, // Mock command registration
   };
 }
 
@@ -112,8 +114,8 @@ describe('session_start handler integration', () => {
       registeredHandlers[event] = handler;
     };
     
-    // Initialize extension
-    extension(mockPi);
+    // Initialize extension (await since it's async now)
+    await extension(mockPi);
     
     // Verify session_start handler was registered
     expect(registeredHandlers['session_start']).toBeDefined();
@@ -152,7 +154,7 @@ describe('session_start handler integration', () => {
       registeredHandlers[event] = handler;
     };
     
-    extension(mockPi);
+    await extension(mockPi);
     
     const mockCtx: any = createMockContext();
     
@@ -179,7 +181,7 @@ describe('session_start handler integration', () => {
       registeredHandlers1[event] = handler;
     };
     
-    extension(mockPi1);
+    await extension(mockPi1);
     const mockCtx1: any = createMockContext();
     registeredHandlers1['session_start']('session_start', mockCtx1);
     
@@ -193,7 +195,7 @@ describe('session_start handler integration', () => {
     mockPi2.on = (event: string, handler: Function) => {
       registeredHandlers2[event] = handler;
     };
-    extension(mockPi2);
+    await extension(mockPi2);
     
     const mockCtx2: any = createMockContext();
     registeredHandlers2['session_start']('session_start', mockCtx2);
@@ -205,7 +207,7 @@ describe('session_start handler integration', () => {
     mockPi3.on = (event: string, handler: Function) => {
       registeredHandlers3[event] = handler;
     };
-    extension(mockPi3);
+    await extension(mockPi3);
     
     const mockCtx3: any = createMockContext();
     registeredHandlers3['session_start']('session_start', mockCtx3);
@@ -222,7 +224,7 @@ describe('session_start handler integration', () => {
       registeredHandlers[event] = handler;
     };
     
-    extension(mockPi);
+    await extension(mockPi);
     const mockCtx: any = createMockContext();
     registeredHandlers['session_start']('session_start', mockCtx);
     

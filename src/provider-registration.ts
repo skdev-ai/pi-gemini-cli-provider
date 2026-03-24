@@ -146,7 +146,7 @@ export async function discoverModels(): Promise<Set<string> | null> {
  * @param modelId - The model ID from VALID_GEMINI_MODELS
  * @returns ProviderModel object
  */
-function mapModelToProviderFormat(modelId: string): ProviderModel {
+export function mapModelToProviderFormat(modelId: string): ProviderModel {
   // Derive display name from model ID
   // e.g., 'gemini-2.5-pro' → 'Gemini 2.5 Pro'
   // e.g., 'gemini-3-flash-preview' → 'Gemini 3 Flash Preview'
@@ -169,14 +169,22 @@ function mapModelToProviderFormat(modelId: string): ProviderModel {
  * Registers the gemini-a2a provider with GSD.
  * 
  * Discovers models from Gemini CLI's own models.js, maps them to the
- * provider format, and returns the registration result.
+ * provider format, and registers with GSD's provider API.
  * 
- * @param pi - GSD extension API
+ * @param pi - GSD extension API with registerProvider method
  * @returns ProviderRegistrationResult with registered models
  * @throws Error if Gemini CLI package root cannot be resolved
  */
 export async function registerGeminiProvider(
-  _pi: { getAllTools(): any[]; on(event: string, handler: Function): void }
+  pi: {
+    getAllTools(): any[];
+    on(event: string, handler: Function): void;
+    registerProvider(id: string, config: {
+      models: ProviderModel[];
+      streamSimple: Function;
+      api?: unknown;
+    }): void;
+  }
 ): Promise<ProviderRegistrationResult> {
   // Discover models from Gemini CLI
   const validModels = await discoverModels();
@@ -200,12 +208,13 @@ export async function registerGeminiProvider(
 
   const providerId = 'gemini-a2a';
 
+  // Import streamSimple for the provider config
+  const { streamSimple } = await import('./stream-simple.js');
+
   // Register the provider with GSD
-  // Note: In real pi integration, this would call pi.registerProvider()
-  // For now, we expose the models for the caller to register
-  console.log(`[gemini-a2a] Discovered ${models.length} models from Gemini CLI:`);
-  models.forEach(model => {
-    console.log(`  - ${model.id} (${model.name})`);
+  pi.registerProvider(providerId, {
+    models,
+    streamSimple,
   });
 
   return {
@@ -242,33 +251,4 @@ export async function getAvailableModelIds(): Promise<string[]> {
     return [];
   }
   return Array.from(validModels);
-}
-
-// ============================================================================
-// SSE Error Detection
-// ============================================================================
-
-/**
- * Checks if an SSE metadata error indicates an invalid model.
- * 
- * Parses metadata.error field from SSE events and detects
- * "not found" errors that indicate invalid model IDs.
- * 
- * @param metadata - SSE metadata object
- * @returns True if the error indicates an invalid model
- */
-export function isInvalidModelError(metadata: unknown): boolean {
-  if (!metadata || typeof metadata !== 'object') {
-    return false;
-  }
-
-  const metadataObj = metadata as Record<string, unknown>;
-  const error = metadataObj.error;
-
-  if (typeof error !== 'string') {
-    return false;
-  }
-
-  // Detect "not found" errors that indicate invalid model
-  return error.toLowerCase().includes('not found');
 }

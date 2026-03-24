@@ -328,6 +328,11 @@ export function streamSimple(params: StreamSimpleParams): {
             signal,
           });
 
+      if (!isReCall) {
+        lastTaskId = result.taskId;
+        lastContextId = result.contextId;
+      }
+
       const messageMetadata = createMessageMetadata(model);
       const finalAssistantMessage = buildAssistantMessage(
         result.message,
@@ -392,7 +397,7 @@ export function streamSimpleGsd(
   const prompt = extractPromptFromContext(context);
   const isReCall = detectReCall(context.messages);
 
-  const { stream, result } = streamSimple({
+  const { stream } = streamSimple({
     prompt,
     context,
     model: model.id,
@@ -400,13 +405,6 @@ export function streamSimpleGsd(
     taskId: isReCall ? lastTaskId : undefined,
     contextId: isReCall ? lastContextId : undefined,
   });
-
-  if (!isReCall) {
-    void result.then((resolved) => {
-      lastTaskId = resolved.taskId;
-      lastContextId = resolved.contextId;
-    });
-  }
 
   return stream;
 }

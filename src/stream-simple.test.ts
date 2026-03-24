@@ -799,6 +799,121 @@ describe('streamSimpleGsd', () => {
     });
   });
 
+  it('stores fresh task IDs before emitting done so immediate re-calls reuse them', async () => {
+    mockCreateTask.mockReturnValue({
+      taskId: 'task_race',
+      contextId: 'ctx_race',
+      state: 'submitted',
+      awaitingApproval: false,
+      pendingToolCalls: [],
+      isTerminal: false,
+    });
+
+    mockSendMessageStream.mockResolvedValue({
+      taskId: 'task_race',
+      contextId: 'ctx_race',
+      sseStream: new ReadableStream(),
+      metadata: { url: 'http://localhost:41242/', requestId: 'req_race' },
+    });
+
+    mockParseSSEStream.mockImplementation(async function* () {
+      yield createToolCallEvent('call_race', 'mcp_tools_search', { query: 'race' });
+      yield createStateChangeEvent('input-required', true, false);
+    });
+
+    mockGetTaskState
+      .mockReturnValueOnce({
+        taskId: 'task_race',
+        contextId: 'ctx_race',
+        state: 'working',
+        awaitingApproval: false,
+        pendingToolCalls: [],
+        isTerminal: false,
+      })
+      .mockReturnValueOnce({
+        taskId: 'task_race',
+        contextId: 'ctx_race',
+        state: 'input-required',
+        awaitingApproval: true,
+        pendingToolCalls: [],
+        isTerminal: false,
+      });
+
+    mockGetPendingToolCalls.mockReturnValue([
+      {
+        callId: 'call_race',
+        name: 'mcp_tools_search',
+        args: { query: 'race' },
+        status: 'scheduled',
+      },
+    ]);
+
+    mockInjectResult.mockResolvedValue({
+      taskId: 'task_race',
+      sseStream: new ReadableStream(),
+      metadata: { url: 'http://localhost:41242/', requestId: 'req_race_recall' },
+    });
+
+    const recallState = {
+      taskId: 'task_race',
+      contextId: 'ctx_race',
+      state: 'completed' as const,
+      awaitingApproval: false,
+      pendingToolCalls: [],
+      isTerminal: true,
+    };
+
+    let recallTriggered = false;
+
+    const initialStream = streamSimpleGsd(
+      { id: 'gemini-a2a' } as any,
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Trigger tool call' }],
+            timestamp: Date.now(),
+          },
+        ],
+      },
+    );
+
+    for await (const event of initialStream) {
+      if (event.type === 'done') {
+        recallTriggered = true;
+        mockGetTaskState.mockReturnValue(recallState);
+
+        const recallStream = streamSimpleGsd(
+          { id: 'gemini-a2a' } as any,
+          {
+            messages: [
+              {
+                role: 'toolResult',
+                toolCallId: 'call_race',
+                toolName: 'mcp_tools_search',
+                isError: false,
+                content: [{ type: 'text', text: 'Search results' }],
+                timestamp: Date.now(),
+              },
+            ],
+          } as any,
+        );
+
+        await collectEvents(recallStream);
+      }
+    }
+
+    expect(recallTriggered).toBe(true);
+    expect(mockInjectResult).toHaveBeenCalledWith({
+      taskId: 'task_race',
+      callId: 'call_race',
+      toolName: 'search',
+      functionResponse: expect.anything(),
+      signal: undefined,
+    });
+    expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
+  });
+
   it('uses the last fresh task IDs for re-calls', async () => {
     mockCreateTask.mockReturnValue({
       taskId: 'task_initial',

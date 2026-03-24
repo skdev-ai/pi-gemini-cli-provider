@@ -113,7 +113,7 @@ describe('availability', () => {
 
     it('returns true when marker is present', () => {
       vi.mocked(readFileSync).mockReturnValue(
-        'PATCH: preserve pending tools on input-required abort (pi-gemini-cli-provider)'
+        'if (currentTask.taskState === "input-required") { logger.info("[CoderAgentExecutor] Task " + taskId + " aborted while awaiting input. Preserving pending tools."); }'
       );
 
       const result = checkA2APendingToolAbortPatched('/mock/path.mjs');

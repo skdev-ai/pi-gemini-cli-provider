@@ -124,7 +124,10 @@ export function checkA2APatched(filePath: string): boolean {
 export function checkA2APendingToolAbortPatched(filePath: string): boolean {
   try {
     const content = readFileSync(filePath, 'utf-8');
-    return content.includes('PATCH: preserve pending tools on input-required abort');
+    return (
+      content.includes('if (currentTask.taskState === "input-required")') &&
+      content.includes('aborted while awaiting input. Preserving pending tools.')
+    );
   } catch {
     return false;
   }

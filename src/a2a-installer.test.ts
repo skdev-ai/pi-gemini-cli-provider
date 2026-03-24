@@ -6,8 +6,8 @@ import { getA2APath, getA2APackageRoot } from './a2a-path.js';
 import { checkA2AInstalled, checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched } from './availability.js';
 import { applyInjectResultPatch } from './inject-result-patch.js';
 
-const UNPATCHED = "function isHeadlessMode(options) {\n  return options?.headless ?? false;\n}\nconst currentTask = wrapper.task;\n} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n}\nif (abortSignal.aborted) {\n                currentTask.cancelPendingTools(\"Execution aborted\");\n            }";
-const PATCHED = "function isHeadlessMode(options) { return false;\n  return options?.headless ?? false;\n}\nconst currentTask = wrapper.task; const _requestedModel = x;\n} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n} else if (outcomeString === 'inject_result') {\n  // PATCH: inject_result support\n  return true;\n}\nif (abortSignal.aborted) {\n                // PATCH: preserve pending tools on input-required abort (pi-gemini-cli-provider)\n                if (currentTask.taskState === \"input-required\") {\n                    logger.info(\"[CoderAgentExecutor] Task \" + taskId + \" aborted while awaiting input. Preserving pending tools.\");\n                }\n                else {\n                    currentTask.cancelPendingTools(\"Execution aborted\");\n                }\n            }";
+const UNPATCHED = "function isHeadlessMode(options) {\n  return options?.headless ?? false;\n}\nconst currentTask = wrapper.task;\n} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n}\nif (abortSignal.aborted) {\n                logger.warn(`[CoderAgentExecutor] Task ${taskId} execution aborted.`);\n                currentTask.cancelPendingTools(\"Execution aborted\");\n            }";
+const PATCHED = "function isHeadlessMode(options) { return false;\n  return options?.headless ?? false;\n}\nconst currentTask = wrapper.task; const _requestedModel = x;\n} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n} else if (outcomeString === 'inject_result') {\n  // PATCH: inject_result support\n  return true;\n}\nif (abortSignal.aborted) {\n                logger.warn(`[CoderAgentExecutor] Task ${taskId} execution aborted.`);\n                if (currentTask.taskState === \"input-required\") {\n                    logger.info(\"[CoderAgentExecutor] Task \" + taskId + \" aborted while awaiting input. Preserving pending tools.\");\n                }\n                else {\n                    currentTask.cancelPendingTools(\"Execution aborted\");\n                }\n            }";
 
 vi.mock('./availability.js', () => ({
   checkA2AInstalled: vi.fn(),
@@ -42,7 +42,10 @@ describe('a2a-installer', () => {
     vi.mocked(checkA2AInstalled).mockReturnValue(false);
     vi.mocked(checkA2APatched).mockReturnValue(false);
     vi.mocked(checkA2AInjectResultPatched).mockReturnValue(false);
-    vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(false);
+    vi.mocked(checkA2APendingToolAbortPatched).mockImplementation((filePath: string) => {
+      const content = vi.mocked(readFileSync)(filePath, 'utf-8' as any) as string;
+      return content.includes('if (currentTask.taskState === "input-required")') && content.includes('aborted while awaiting input. Preserving pending tools.');
+    });
     vi.mocked(existsSync).mockReturnValue(false);
     vi.mocked(mkdirSync).mockReturnValue(undefined);
     vi.mocked(writeFileSync).mockReturnValue(undefined);
@@ -86,7 +89,10 @@ describe('a2a-installer', () => {
       vi.mocked(checkA2AInstalled).mockReturnValue(true);
       vi.mocked(checkA2APatched).mockReturnValue(false);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(false);
-      vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(false);
+      vi.mocked(checkA2APendingToolAbortPatched).mockImplementation((filePath: string) => {
+        const fileContent = vi.mocked(readFileSync)(filePath, 'utf-8' as any) as string;
+        return fileContent.includes('if (currentTask.taskState === "input-required")') && fileContent.includes('aborted while awaiting input. Preserving pending tools.');
+      });
       vi.mocked(ctx.ui.confirm).mockResolvedValue(true);
 
       let content = UNPATCHED;
@@ -223,6 +229,8 @@ describe('a2a-installer', () => {
 
       await installA2AServer(ctx);
       expect(writeFileSync).toHaveBeenCalled();
+      expect(content).toContain('logger.warn(`[CoderAgentExecutor] Task ${taskId} execution aborted.`);');
+      expect(content).toContain('if (currentTask.taskState === "input-required")');
     });
 
     it('throws when target not found', async () => {
@@ -278,7 +286,7 @@ describe('a2a-installer', () => {
         if (path.includes('a2a-server.mjs') && !path.includes('.bak')) {
           readCount += 1;
           if (readCount >= 3) {
-            return content.replace('PATCH: preserve pending tools on input-required abort (pi-gemini-cli-provider)', '');
+            return content.replace('if (currentTask.taskState === "input-required") {', 'if (currentTask.taskState === "not-input-required") {');
           }
           return content;
         }
@@ -323,8 +331,8 @@ describe('a2a-installer', () => {
       });
       vi.mocked(applyInjectResultPatch).mockImplementation(() => {
         content = content.replace(
-          "} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n}\nif (abortSignal.aborted) {",
-          "} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n} else if (outcomeString === 'inject_result') {\n  // PATCH: inject_result support\n  return true;\n}\nif (abortSignal.aborted) {"
+          "} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n}",
+          "} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n} else if (outcomeString === 'inject_result') {\n  // PATCH: inject_result support\n  return true;\n}"
         );
         return true;
       });

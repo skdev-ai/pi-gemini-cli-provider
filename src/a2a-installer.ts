@@ -309,14 +309,14 @@ function applyPatches(ctx: InstallerContext): void {
     }
 
     // Patch 4: preserve pending tools when abort fires while awaiting input
-    const patch4Target = "if (abortSignal.aborted) {\n                currentTask.cancelPendingTools(\"Execution aborted\");\n            }";
+    const patch4Target = 'currentTask.cancelPendingTools("Execution aborted");';
     if (!content.includes('PATCH: preserve pending tools on input-required abort')) {
       const contentWithPatch3 = readFileSync(a2aPath, 'utf-8');
       if (!contentWithPatch3.includes(patch4Target)) {
         throw new Error('Patch target not found: abortSignal input-required guard');
       }
 
-      const patch4Replacement = `if (abortSignal.aborted) {\n                // PATCH: preserve pending tools on input-required abort (pi-gemini-cli-provider)\n                if (currentTask.taskState === \"input-required\") {\n                    logger.info(\"[CoderAgentExecutor] Task \" + taskId + \" aborted while awaiting input. Preserving pending tools.\");\n                }\n                else {\n                    currentTask.cancelPendingTools(\"Execution aborted\");\n                }\n            }`;
+      const patch4Replacement = `if (currentTask.taskState === "input-required") {\n                    logger.info("[CoderAgentExecutor] Task " + taskId + " aborted while awaiting input. Preserving pending tools.");\n                }\n                else {\n                    currentTask.cancelPendingTools("Execution aborted");\n                }`;
       writeFileSync(a2aPath, contentWithPatch3.replace(patch4Target, patch4Replacement), 'utf-8');
     }
     
@@ -419,7 +419,7 @@ function verifyPatches(ctx: InstallerContext): void {
     }
 
     // Verify Patch 4
-    if (!content.includes('PATCH: preserve pending tools on input-required abort')) {
+    if (!checkA2APendingToolAbortPatched(a2aPath)) {
       // Restore backup
       if (existsSync(a2aPath + '.bak')) {
         const backupContent = readFileSync(a2aPath + '.bak', 'utf-8');

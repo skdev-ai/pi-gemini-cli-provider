@@ -12,7 +12,7 @@ export const INJECT_RESULT_MARKER = 'PATCH: inject_result support (pi-gemini-cli
  * The exact patch string to insert into the A2A server bundle.
  * This adds a new outcome handler for 'inject_result' in the _handleToolConfirmationPart function.
  */
-export const INJECT_RESULT_CASE = `} else if (outcomeString === 'inject_result') {
+export const INJECT_RESULT_CASE = `} else if (outcomeString === "inject_result") {
   // PATCH: inject_result support (pi-gemini-cli-provider)
   const functionResponse = part.data['functionResponse'];
   if (!functionResponse || typeof functionResponse !== 'object') {
@@ -67,10 +67,11 @@ export const INJECT_RESULT_CASE = `} else if (outcomeString === 'inject_result')
 }`;
 
 /**
- * Insertion point marker: the line we search for to find where to insert the patch.
- * The patch is inserted after the 'proceed_always_and_save' case block.
+ * Insertion point markers: lines we search for to find where to insert the patch.
+ * The A2A server bundle uses double quotes, but we check both for robustness.
  */
-const INSERTION_POINT_MARKER = "} else if (outcomeString === 'proceed_always_and_save') {";
+const INSERTION_POINT_MARKER_DOUBLE = '} else if (outcomeString === "proceed_always_and_save") {';
+const INSERTION_POINT_MARKER_SINGLE = "} else if (outcomeString === 'proceed_always_and_save') {";
 
 /**
  * Checks if the A2A server bundle has been patched with inject_result support.
@@ -111,17 +112,24 @@ export function applyInjectResultPatch(bundlePath: string): boolean {
   // Read bundle content
   const content = readFileSync(bundlePath, 'utf-8');
   
-  // Find insertion point
-  const insertionIndex = content.indexOf(INSERTION_POINT_MARKER);
+  // Find insertion point (try double quotes first, then single)
+  let insertionIndex = content.indexOf(INSERTION_POINT_MARKER_DOUBLE);
+  if (insertionIndex === -1) {
+    insertionIndex = content.indexOf(INSERTION_POINT_MARKER_SINGLE);
+  }
+  
   if (insertionIndex === -1) {
     throw new Error(
-      `Could not find insertion point in bundle. Expected to find: ${INSERTION_POINT_MARKER}`
+      `Could not find insertion point in bundle. Expected to find: ${INSERTION_POINT_MARKER_DOUBLE} or ${INSERTION_POINT_MARKER_SINGLE}`
     );
   }
   
   // Find the end of the proceed_always_and_save block
-  // We need to find the closing brace of this block, then insert after it
-  const blockStartIndex = insertionIndex + INSERTION_POINT_MARKER.length;
+  // Use the marker that was actually found
+  const foundMarker = insertionIndex === content.indexOf(INSERTION_POINT_MARKER_DOUBLE) 
+    ? INSERTION_POINT_MARKER_DOUBLE 
+    : INSERTION_POINT_MARKER_SINGLE;
+  const blockStartIndex = insertionIndex + foundMarker.length;
   
   // Find the end of the proceed_always_and_save block by tracking brace depth
   // Start with braceCount = 1 since we're looking for the block's opening brace first

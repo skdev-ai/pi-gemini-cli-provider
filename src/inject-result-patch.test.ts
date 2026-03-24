@@ -116,7 +116,7 @@ describe('inject_result patch', () => {
         // Verify patch was applied
         const content = readFileSync(testBundle, 'utf-8');
         expect(content).toContain(INJECT_RESULT_MARKER);
-        expect(content).toContain("outcomeString === 'inject_result'");
+        expect(content).toContain('outcomeString === "inject_result"');
       } finally {
         cleanupTestBundle(testBundle);
       }
@@ -179,7 +179,7 @@ describe('inject_result patch', () => {
       try {
         applyInjectResultPatch(testBundle);
         const content = readFileSync(testBundle, 'utf-8');
-        expect(content).toContain("outcomeString === 'inject_result'");
+        expect(content).toContain('outcomeString === "inject_result"');
         expect(content).toContain('functionResponse');
         expect(content).toContain('completedToolCall');
         expect(content).toContain('this.completedToolCalls.push');
@@ -203,9 +203,9 @@ describe('inject_result patch', () => {
         const patchedContent = readFileSync(testBundle, 'utf-8');
         
         // Original content should still be present
-        expect(patchedContent).toContain("outcomeString === 'proceed_always'");
-        expect(patchedContent).toContain("outcomeString === 'proceed_always_and_save'");
-        expect(patchedContent).toContain("outcomeString === 'discard'");
+        expect(patchedContent).toContain('outcomeString === "proceed_always"');
+        expect(patchedContent).toContain('outcomeString === "proceed_always_and_save"');
+        expect(patchedContent).toContain('outcomeString === "discard"');
         
         // Patched content should be longer
         expect(patchedContent.length).toBeGreaterThan(originalContent.length);
@@ -261,7 +261,7 @@ describe('inject_result patch', () => {
     });
 
     it('INJECT_RESULT_CASE contains inject_result outcome check', () => {
-      expect(INJECT_RESULT_CASE).toContain("outcomeString === 'inject_result'");
+      expect(INJECT_RESULT_CASE).toContain('outcomeString === "inject_result"');
     });
 
     it('INJECT_RESULT_CASE contains functionResponse handling', () => {

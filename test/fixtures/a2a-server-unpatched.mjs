@@ -22,15 +22,15 @@ class TaskHandler {
       return false;
     }
 
-    if (outcomeString === 'proceed_always') {
+    if (outcomeString === "proceed_always") {
       // Handle proceed_always case
       return true;
-    } else if (outcomeString === 'proceed_always_and_save') {
+    } else if (outcomeString === "proceed_always_and_save") {
       // Handle proceed_always_and_save case
       this.completedToolCalls.push({ callId, status: 'saved' });
       this._resolveToolCall(callId);
       return true;
-    } else if (outcomeString === 'discard') {
+    } else if (outcomeString === "discard") {
       // Handle discard case
       return true;
     }

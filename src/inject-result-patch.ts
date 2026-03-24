@@ -67,11 +67,10 @@ export const INJECT_RESULT_CASE = `} else if (outcomeString === "inject_result")
 }`;
 
 /**
- * Insertion point markers: lines we search for to find where to insert the patch.
- * The A2A server bundle uses double quotes, but we check both for robustness.
+ * Default fallback else block target.
+ * The inject_result case must be inserted immediately before this block.
  */
-const INSERTION_POINT_MARKER_DOUBLE = '} else if (outcomeString === "proceed_always_and_save") {';
-const INSERTION_POINT_MARKER_SINGLE = "} else if (outcomeString === 'proceed_always_and_save') {";
+const DEFAULT_ELSE_TARGET = '    } else {\n      logger.warn(\n        `[Task] Unknown tool confirmation outcome:';
 
 /**
  * Checks if the A2A server bundle has been patched with inject_result support.
@@ -111,59 +110,20 @@ export function applyInjectResultPatch(bundlePath: string): boolean {
   
   // Read bundle content
   const content = readFileSync(bundlePath, 'utf-8');
-  
-  // Find insertion point (try double quotes first, then single)
-  let insertionIndex = content.indexOf(INSERTION_POINT_MARKER_DOUBLE);
+
+  // Insert immediately before the default fallback else block.
+  const insertionIndex = content.indexOf(DEFAULT_ELSE_TARGET);
+
   if (insertionIndex === -1) {
-    insertionIndex = content.indexOf(INSERTION_POINT_MARKER_SINGLE);
+    throw new Error('Could not find default else block for inject_result insertion');
   }
-  
-  if (insertionIndex === -1) {
-    throw new Error(
-      `Could not find insertion point in bundle. Expected to find: ${INSERTION_POINT_MARKER_DOUBLE} or ${INSERTION_POINT_MARKER_SINGLE}`
-    );
-  }
-  
-  // Find the end of the proceed_always_and_save block
-  // Use the marker that was actually found
-  const foundMarker = insertionIndex === content.indexOf(INSERTION_POINT_MARKER_DOUBLE) 
-    ? INSERTION_POINT_MARKER_DOUBLE 
-    : INSERTION_POINT_MARKER_SINGLE;
-  const blockStartIndex = insertionIndex + foundMarker.length;
-  
-  // Find the end of the proceed_always_and_save block by tracking brace depth
-  // Start with braceCount = 1 since we're looking for the block's opening brace first
-  let braceCount = 0;
-  let blockEndIndex = blockStartIndex;
-  
-  // Scan forward to find the block structure
-  for (let i = blockStartIndex; i < content.length; i++) {
-    const char = content[i];
-    
-    if (char === '{') {
-      braceCount++;
-    } else if (char === '}') {
-      braceCount--;
-      if (braceCount === 0) {
-        // Found the closing brace of the proceed_always_and_save block
-        blockEndIndex = i + 1; // Position after the closing brace
-        break;
-      }
-    }
-  }
-  
-  if (blockEndIndex === blockStartIndex) {
-    throw new Error(
-      'Could not find the end of the proceed_always_and_save block in bundle'
-    );
-  }
-  
+
   // Construct the patched content
-  const patchedContent = 
-    content.slice(0, blockEndIndex) + 
-    '\n' + 
-    INJECT_RESULT_CASE + 
-    content.slice(blockEndIndex);
+  const patchedContent =
+    content.slice(0, insertionIndex) +
+    INJECT_RESULT_CASE +
+    '\n' +
+    content.slice(insertionIndex);
   
   // Atomic write: write to temp file first, then rename
   const tempDir = mkdtempSync(join(tmpdir(), 'a2a-patch-'));

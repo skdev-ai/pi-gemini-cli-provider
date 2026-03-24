@@ -130,7 +130,7 @@ describe('workspace-generator', () => {
       );
     });
 
-    it('includes warning comment in settings file', () => {
+    it('writes valid JSON without a comment header', () => {
       let capturedContent = '';
       vi.mocked(writeFileSync).mockImplementation((path: any, content: any) => {
         if (path.toString().endsWith('settings.json')) {
@@ -140,8 +140,8 @@ describe('workspace-generator', () => {
 
       generateWorkspace();
 
-      expect(capturedContent).toContain('WARNING: excludeTools is a denylist');
-      expect(capturedContent).toContain('Version pinning to v0.34.0 is the safety net');
+      expect(() => JSON.parse(capturedContent)).not.toThrow();
+      expect(capturedContent.trimStart().startsWith('//')).toBe(false);
     });
 
     it('returns created: false when workspace already exists (idempotent)', () => {
@@ -232,7 +232,7 @@ describe('workspace-generator', () => {
       expect(result).toEqual(__testing__.PROVIDER_WORKSPACE_SETTINGS);
     });
 
-    it('parses settings file with comment header', () => {
+    it('throws WorkspaceGenerationError when settings file contains comments', () => {
       const contentWithComments = `// This is a comment
 // Another comment
 ${JSON.stringify(__testing__.PROVIDER_WORKSPACE_SETTINGS)}`;
@@ -240,9 +240,8 @@ ${JSON.stringify(__testing__.PROVIDER_WORKSPACE_SETTINGS)}`;
       vi.mocked(existsSync).mockReturnValue(true);
       vi.mocked(readFileSync).mockReturnValue(contentWithComments);
 
-      const result = readSettingsFile(defaultWorkspacePath);
-
-      expect(result).toEqual(__testing__.PROVIDER_WORKSPACE_SETTINGS);
+      expect(() => readSettingsFile(defaultWorkspacePath)).toThrow(WorkspaceGenerationError);
+      expect(() => readSettingsFile(defaultWorkspacePath)).toThrow('Failed to parse settings.json');
     });
 
     it('throws WorkspaceGenerationError when JSON is invalid', () => {
@@ -341,23 +340,18 @@ ${JSON.stringify(__testing__.PROVIDER_WORKSPACE_SETTINGS)}`;
   describe('generateSettingsContent', () => {
     it('generates correct JSON structure', () => {
       const content = __testing__.generateSettingsContent();
-      
-      // Remove comment lines for parsing
-      const jsonContent = content
-        .split('\n')
-        .filter(line => !line.trim().startsWith('//'))
-        .join('\n');
-      const settings = JSON.parse(jsonContent);
+      const settings = JSON.parse(content);
 
       expect(settings.excludeTools).toBeDefined();
       expect(settings.folderTrust).toBe(true);
       expect(settings.mcpServers).toBeDefined();
     });
 
-    it('generates content with warning comment', () => {
+    it('generates pure JSON without comments', () => {
       const content = __testing__.generateSettingsContent();
 
-      expect(content).toContain('WARNING: excludeTools is a denylist');
+      expect(() => JSON.parse(content)).not.toThrow();
+      expect(content.trimStart().startsWith('//')).toBe(false);
     });
 
     it('respects enableMcpServer option', () => {

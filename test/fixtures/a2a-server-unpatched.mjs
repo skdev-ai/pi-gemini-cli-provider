@@ -33,9 +33,15 @@ class TaskHandler {
     } else if (outcomeString === "discard") {
       // Handle discard case
       return true;
+    } else if (outcomeString === "modify_with_editor") {
+      // Handle modify_with_editor case
+      return true;
+    } else {
+      logger.warn(
+        `[Task] Unknown tool confirmation outcome: ${outcomeString} for callId: ${callId}`,
+      );
+      return false;
     }
-
-    return false;
   }
 }
 

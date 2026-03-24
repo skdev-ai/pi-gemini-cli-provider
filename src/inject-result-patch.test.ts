@@ -149,14 +149,14 @@ describe('inject_result patch', () => {
       }
     });
 
-    it('throws if insertion point not found', () => {
+    it('throws if default else block not found', () => {
       const badBundle = join(TEMP_TEST_DIR, 'bad-bundle.mjs');
-      // Create a bundle without the insertion point
-      writeFileSync(badBundle, 'const x = 1; console.log("no insertion point here");', 'utf-8');
+      // Create a bundle without the default else target
+      writeFileSync(badBundle, 'const x = 1; console.log("no default else target here");', 'utf-8');
       
       try {
         expect(() => applyInjectResultPatch(badBundle)).toThrow(
-          'Could not find insertion point in bundle'
+          'Could not find default else block for inject_result insertion'
         );
       } finally {
         cleanupTestBundle(badBundle);
@@ -206,9 +206,28 @@ describe('inject_result patch', () => {
         expect(patchedContent).toContain('outcomeString === "proceed_always"');
         expect(patchedContent).toContain('outcomeString === "proceed_always_and_save"');
         expect(patchedContent).toContain('outcomeString === "discard"');
+        expect(patchedContent).toContain('outcomeString === "modify_with_editor"');
+        expect(patchedContent).toContain('[Task] Unknown tool confirmation outcome:');
         
         // Patched content should be longer
         expect(patchedContent.length).toBeGreaterThan(originalContent.length);
+      } finally {
+        cleanupTestBundle(testBundle);
+      }
+    });
+
+    it('inserts inject_result before the default else warning block', () => {
+      const testBundle = createTestBundle();
+      try {
+        applyInjectResultPatch(testBundle);
+        const patchedContent = readFileSync(testBundle, 'utf-8');
+
+        const injectIndex = patchedContent.indexOf('} else if (outcomeString === "inject_result") {');
+        const defaultElseIndex = patchedContent.indexOf('    } else {\n      logger.warn(\n        `[Task] Unknown tool confirmation outcome:');
+
+        expect(injectIndex).toBeGreaterThan(-1);
+        expect(defaultElseIndex).toBeGreaterThan(-1);
+        expect(injectIndex).toBeLessThan(defaultElseIndex);
       } finally {
         cleanupTestBundle(testBundle);
       }

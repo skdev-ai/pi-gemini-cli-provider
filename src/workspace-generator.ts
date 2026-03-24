@@ -168,12 +168,7 @@ function generateSettingsContent(config?: WorkspaceConfig): string {
     })
   };
   
-  // Add warning comment header
-  const commentHeader = `// WARNING: excludeTools is a denylist. New tools added by Google in future versions will be auto-approved.
-// Version pinning to v0.34.0 is the safety net.
-`;
-  
-  return commentHeader + JSON.stringify(settings, null, 2) + '\n';
+  return JSON.stringify(settings, null, 2) + '\n';
 }
 
 /**
@@ -219,9 +214,7 @@ export function readSettingsFile(workspacePath: string): typeof PROVIDER_WORKSPA
   
   try {
     const content = readFileSync(settingsPath, 'utf-8');
-    // Remove comment lines before parsing
-    const jsonContent = content.split('\n').filter(line => !line.trim().startsWith('//')).join('\n');
-    return JSON.parse(jsonContent);
+    return JSON.parse(content);
   } catch (error: any) {
     const errorMessage = error.message || String(error);
     throw new WorkspaceGenerationError(

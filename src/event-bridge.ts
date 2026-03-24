@@ -74,7 +74,7 @@ export function updatePartialMessage(
       
       // Check if tool call already exists (update) or is new (add)
       const existingIndex = partial.toolCalls.findIndex(
-        call => call.callId === piToolCall.callId
+        call => call.id === piToolCall.id
       );
       
       const newToolCalls = [...partial.toolCalls];
@@ -136,9 +136,9 @@ export function accumulateEvents(events: ParsedA2AEvent[]): PartialAssistantMess
  */
 export function convertToolCallToPi(toolCall: ToolCallMetadata): PiToolCallContent {
   return {
-    callId: toolCall.callId,
+    id: toolCall.callId,
     name: stripMcpPrefix(toolCall.name),
-    args: toolCall.args,
+    arguments: (toolCall.args ?? {}) as Record<string, any>,
   };
 }
 
@@ -402,7 +402,7 @@ export function validatePartialMessage(partial: PartialAssistantMessage): {
   for (let i = 0; i < partial.toolCalls.length; i++) {
     const call = partial.toolCalls[i];
     
-    if (!call.callId) {
+    if (!call.id) {
       errors.push(`Tool call at index ${i} missing callId`);
     }
     
@@ -410,7 +410,7 @@ export function validatePartialMessage(partial: PartialAssistantMessage): {
       errors.push(`Tool call at index ${i} missing name`);
     }
     
-    if (call.args === undefined) {
+    if (call.arguments === undefined) {
       errors.push(`Tool call at index ${i} missing args`);
     }
   }

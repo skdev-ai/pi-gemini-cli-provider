@@ -49,9 +49,9 @@ export interface AssistantMessageThinkingContent {
 
 export interface AssistantMessageToolCallContent {
   type: 'toolCall';
-  callId: string;
-  toolName: string;
-  args: unknown;
+  id: string;
+  name: string;
+  arguments: Record<string, any>;
 }
 
 export type AssistantMessageContent =
@@ -59,11 +59,32 @@ export type AssistantMessageContent =
   | AssistantMessageThinkingContent
   | AssistantMessageToolCallContent;
 
+export interface Usage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
+}
+
 export interface AssistantMessage {
   role: 'assistant';
   content: AssistantMessageContent[];
-  stopReason?: 'stop' | 'toolUse' | 'length' | 'error' | 'aborted';
+  api: string;
+  provider: string;
+  model: string;
+  responseId?: string;
+  usage: Usage;
+  stopReason: 'stop' | 'toolUse' | 'length' | 'error' | 'aborted';
   errorMessage?: string;
+  timestamp: number;
 }
 
 export type AssistantMessageEvent =
@@ -237,6 +258,33 @@ interface StreamEventState {
   toolCallIndices: Map<string, number>;
 }
 
+interface MessageMetadata {
+  api: string;
+  provider: string;
+  model: string;
+}
+
+const DEFAULT_MESSAGE_METADATA: MessageMetadata = {
+  api: 'gemini-a2a',
+  provider: 'gemini-a2a',
+  model: 'unknown',
+};
+
+const ZERO_USAGE: Usage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    total: 0,
+  },
+};
+
 // =============================================================================
 // Public entrypoints
 // =============================================================================
@@ -277,12 +325,17 @@ export function streamSimple(params: StreamSimpleParams): {
             signal,
           });
 
-      const finalAssistantMessage = buildAssistantMessage(result.message, mapStopReason(result.stopReason));
+      const messageMetadata = createMessageMetadata(model);
+      const finalAssistantMessage = buildAssistantMessage(
+        result.message,
+        messageMetadata,
+        mapStopReason(result.stopReason),
+      );
       emitDone(stream, finalAssistantMessage);
       resolveResult(result);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      emitError(stream, errorMessage, signal?.aborted === true ? 'aborted' : 'error');
+      emitError(stream, createMessageMetadata(model), errorMessage, signal?.aborted === true ? 'aborted' : 'error');
       rejectResult(new Error(errorMessage));
     }
   })();
@@ -380,7 +433,7 @@ async function handleFreshPrompt(
     updateTaskState(a2aTaskId, event);
     const nextPartial = updatePartialMessage(partialMessage, event);
     copyPartialMessage(partialMessage, nextPartial);
-    emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([event]));
+    emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([event]), createMessageMetadata(model));
 
     const updatedState = getTaskState(a2aTaskId);
     if (updatedState?.awaitingApproval) {
@@ -410,7 +463,7 @@ async function handleFreshPrompt(
                 updateTaskState(a2aTaskId, approveEvent);
                 const approvePartial = updatePartialMessage(partialMessage, approveEvent);
                 copyPartialMessage(partialMessage, approvePartial);
-                emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([approveEvent]));
+                emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([approveEvent]), createMessageMetadata(model));
 
                 const approvedState = getTaskState(a2aTaskId);
                 if (approvedState?.isTerminal) {
@@ -438,13 +491,13 @@ async function handleFreshPrompt(
     text: partialMessage.text,
     thinking: partialMessage.thinking,
     toolCalls: partialMessage.toolCalls.map((call) => ({
-      callId: call.callId,
+      callId: call.id,
       name: call.name,
-      args: call.args,
+      args: call.arguments,
     })),
   };
 
-  finalizeOpenContent(stream, eventState, finalMessage);
+  finalizeOpenContent(stream, eventState, finalMessage, createMessageMetadata(model));
 
   return {
     taskId: a2aTaskId,
@@ -468,7 +521,7 @@ async function handleReCall(
     signal?: AbortSignal;
   },
 ): Promise<StreamSimpleResult> {
-  const { context, taskId, contextId, signal } = params;
+  const { context, taskId, contextId, model, signal } = params;
 
   const extractedResults = extractAllToolResults(context.messages);
   if (extractedResults.length === 0) {
@@ -504,7 +557,7 @@ async function handleReCall(
         updateTaskState(taskId, event);
         const nextPartial = updatePartialMessage(partialMessage, event);
         copyPartialMessage(partialMessage, nextPartial);
-        emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([event]));
+        emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([event]), createMessageMetadata(model));
 
         const updatedState = getTaskState(taskId);
         if (updatedState?.awaitingApproval) {
@@ -536,13 +589,13 @@ async function handleReCall(
     text: partialMessage.text,
     thinking: partialMessage.thinking,
     toolCalls: partialMessage.toolCalls.map((call) => ({
-      callId: call.callId,
+      callId: call.id,
       name: call.name,
-      args: call.args,
+      args: call.arguments,
     })),
   };
 
-  finalizeOpenContent(stream, eventState, finalMessage);
+  finalizeOpenContent(stream, eventState, finalMessage, createMessageMetadata(model));
 
   return {
     taskId,
@@ -572,16 +625,17 @@ function emitTranslatedEvents(
   state: StreamEventState,
   partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
   piEvents: Array<{ type: 'text' | 'thinking' | 'toolCall'; content: string | PiToolCallContent }>,
+  metadata: MessageMetadata,
 ): void {
-  ensureStartEvent(stream, state, partialMessage);
+  ensureStartEvent(stream, state, partialMessage, metadata);
 
   for (const piEvent of piEvents) {
     if (piEvent.type === 'text') {
-      emitTextDelta(stream, state, partialMessage, piEvent.content as string);
+      emitTextDelta(stream, state, partialMessage, deltaToString(piEvent.content), metadata);
     } else if (piEvent.type === 'thinking') {
-      emitThinkingDelta(stream, state, partialMessage, piEvent.content as string);
+      emitThinkingDelta(stream, state, partialMessage, deltaToString(piEvent.content), metadata);
     } else if (piEvent.type === 'toolCall') {
-      emitToolCall(stream, state, partialMessage, piEvent.content as PiToolCallContent);
+      emitToolCall(stream, state, partialMessage, piEvent.content as PiToolCallContent, metadata);
     }
   }
 }
@@ -590,6 +644,7 @@ function ensureStartEvent(
   stream: AssistantMessageEventStream,
   state: StreamEventState,
   partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
+  metadata: MessageMetadata,
 ): void {
   if (state.emittedStart) {
     return;
@@ -597,7 +652,7 @@ function ensureStartEvent(
 
   stream.push({
     type: 'start',
-    partial: buildAssistantMessage(snapshotMessage(partialMessage)),
+    partial: buildAssistantMessage(snapshotMessage(partialMessage), metadata, 'stop'),
   });
   state.emittedStart = true;
 }
@@ -607,15 +662,16 @@ function emitTextDelta(
   state: StreamEventState,
   partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
   delta: string,
+  metadata: MessageMetadata,
 ): void {
-  ensureStartEvent(stream, state, partialMessage);
+  ensureStartEvent(stream, state, partialMessage, metadata);
 
   if (state.textIndex === null) {
     state.textIndex = getOrCreateTextIndex(partialMessage);
     stream.push({
       type: 'text_start',
       contentIndex: state.textIndex,
-      partial: buildAssistantMessage(snapshotMessage(partialMessage)),
+      partial: buildAssistantMessage(snapshotMessage(partialMessage), metadata, 'stop'),
     });
   }
 
@@ -624,7 +680,7 @@ function emitTextDelta(
     type: 'text_delta',
     contentIndex: state.textIndex,
     delta,
-    partial: buildAssistantMessage(snapshotMessage(partialMessage)),
+    partial: buildAssistantMessage(snapshotMessage(partialMessage), metadata, 'stop'),
   });
 }
 
@@ -633,15 +689,16 @@ function emitThinkingDelta(
   state: StreamEventState,
   partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
   delta: string,
+  metadata: MessageMetadata,
 ): void {
-  ensureStartEvent(stream, state, partialMessage);
+  ensureStartEvent(stream, state, partialMessage, metadata);
 
   if (state.thinkingIndex === null) {
     state.thinkingIndex = getOrCreateThinkingIndex(partialMessage);
     stream.push({
       type: 'thinking_start',
       contentIndex: state.thinkingIndex,
-      partial: buildAssistantMessage(snapshotMessage(partialMessage)),
+      partial: buildAssistantMessage(snapshotMessage(partialMessage), metadata, 'stop'),
     });
   }
 
@@ -650,7 +707,7 @@ function emitThinkingDelta(
     type: 'thinking_delta',
     contentIndex: state.thinkingIndex,
     delta,
-    partial: buildAssistantMessage(snapshotMessage(partialMessage)),
+    partial: buildAssistantMessage(snapshotMessage(partialMessage), metadata, 'stop'),
   });
 }
 
@@ -659,23 +716,24 @@ function emitToolCall(
   state: StreamEventState,
   partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
   toolCall: PiToolCallContent,
+  metadata: MessageMetadata,
 ): void {
-  ensureStartEvent(stream, state, partialMessage);
+  ensureStartEvent(stream, state, partialMessage, metadata);
 
-  if (state.toolCallIndices.has(toolCall.callId)) {
+  if (state.toolCallIndices.has(toolCall.id)) {
     return;
   }
 
-  const contentIndex = partialMessage.toolCalls.findIndex((call) => call.callId === toolCall.callId);
+  const contentIndex = partialMessage.toolCalls.findIndex((call) => call.id === toolCall.id);
   if (contentIndex === -1) {
     return;
   }
 
-  state.toolCallIndices.set(toolCall.callId, contentIndex);
+  state.toolCallIndices.set(toolCall.id, contentIndex);
   stream.push({
     type: 'toolcall_start',
     contentIndex,
-    partial: buildAssistantMessage(snapshotMessage(partialMessage)),
+    partial: buildAssistantMessage(snapshotMessage(partialMessage), metadata, 'stop'),
   });
 }
 
@@ -683,13 +741,18 @@ function finalizeOpenContent(
   stream: AssistantMessageEventStream,
   state: StreamEventState,
   finalMessage: { text: string; thinking: string; toolCalls: Array<{ callId: string; name: string; args: unknown }> },
+  metadata: MessageMetadata,
 ): void {
-  const finalAssistantMessage = buildAssistantMessage(finalMessage);
+  const finalAssistantMessage = buildAssistantMessage(finalMessage, metadata, 'stop');
   ensureStartEvent(stream, state, {
     text: finalMessage.text,
     thinking: finalMessage.thinking,
-    toolCalls: finalMessage.toolCalls.map((call) => ({ callId: call.callId, name: call.name, args: call.args })),
-  });
+    toolCalls: finalMessage.toolCalls.map((call) => ({
+      id: call.callId,
+      name: call.name,
+      arguments: normalizeToolArguments(call.args),
+    })),
+  }, metadata);
 
   if (state.textIndex !== null) {
     stream.push({
@@ -723,18 +786,19 @@ function emitDone(stream: AssistantMessageEventStream, message: AssistantMessage
 
 function emitError(
   stream: AssistantMessageEventStream,
+  metadata: MessageMetadata,
   errorMessage: string,
   reason: 'error' | 'aborted',
 ): void {
   stream.push({
     type: 'error',
     reason,
-    error: {
-      role: 'assistant',
-      content: [],
-      stopReason: reason,
+    error: buildAssistantMessage(
+      { text: '', thinking: '', toolCalls: [] },
+      metadata,
+      reason,
       errorMessage,
-    },
+    ),
   });
 }
 
@@ -766,9 +830,9 @@ function partialMessageToContent(partialMessage: {
   for (const toolCall of partialMessage.toolCalls) {
     content.push({
       type: 'toolCall',
-      callId: toolCall.callId,
-      toolName: toolCall.name,
-      args: toolCall.args,
+      id: toolCall.id,
+      name: toolCall.name,
+      arguments: toolCall.arguments,
     });
   }
 
@@ -781,24 +845,30 @@ function buildAssistantMessage(
     thinking: string;
     toolCalls: Array<{ callId: string; name: string; args: unknown }>;
   },
-  stopReason?: AssistantMessage['stopReason'],
+  metadata: MessageMetadata,
+  stopReason: AssistantMessage['stopReason'],
   errorMessage?: string,
 ): AssistantMessage {
   const toolCalls: PiToolCallContent[] = message.toolCalls.map((call) => ({
-    callId: call.callId,
+    id: call.callId,
     name: call.name,
-    args: call.args,
+    arguments: normalizeToolArguments(call.args),
   }));
 
   return {
     role: 'assistant',
+    api: metadata.api,
+    provider: metadata.provider,
+    model: metadata.model,
     content: partialMessageToContent({
       text: message.text,
       thinking: message.thinking,
       toolCalls,
     }),
-    ...(stopReason ? { stopReason } : {}),
+    usage: createZeroUsage(),
+    stopReason,
     ...(errorMessage ? { errorMessage } : {}),
+    timestamp: Date.now(),
   };
 }
 
@@ -811,9 +881,9 @@ function snapshotMessage(partialMessage: {
     text: partialMessage.text,
     thinking: partialMessage.thinking,
     toolCalls: partialMessage.toolCalls.map((call) => ({
-      callId: call.callId,
+      callId: call.id,
       name: call.name,
-      args: call.args,
+      args: call.arguments,
     })),
   };
 }
@@ -825,6 +895,42 @@ function copyPartialMessage(
   target.text = next.text;
   target.thinking = next.thinking;
   target.toolCalls = next.toolCalls;
+}
+
+function createMessageMetadata(model?: string): MessageMetadata {
+  return {
+    ...DEFAULT_MESSAGE_METADATA,
+    model: model ?? DEFAULT_MESSAGE_METADATA.model,
+  };
+}
+
+function createZeroUsage(): Usage {
+  return {
+    input: ZERO_USAGE.input,
+    output: ZERO_USAGE.output,
+    cacheRead: ZERO_USAGE.cacheRead,
+    cacheWrite: ZERO_USAGE.cacheWrite,
+    totalTokens: ZERO_USAGE.totalTokens,
+    cost: {
+      input: ZERO_USAGE.cost.input,
+      output: ZERO_USAGE.cost.output,
+      cacheRead: ZERO_USAGE.cost.cacheRead,
+      cacheWrite: ZERO_USAGE.cost.cacheWrite,
+      total: ZERO_USAGE.cost.total,
+    },
+  };
+}
+
+function normalizeToolArguments(args: unknown): Record<string, any> {
+  if (args && typeof args === 'object' && !Array.isArray(args)) {
+    return args as Record<string, any>;
+  }
+
+  return {};
+}
+
+function deltaToString(content: string | PiToolCallContent): string {
+  return typeof content === 'string' ? content : '';
 }
 
 function mapStopReason(stopReason?: string): AssistantMessage['stopReason'] {

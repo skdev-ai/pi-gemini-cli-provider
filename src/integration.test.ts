@@ -190,9 +190,9 @@ describeLive('Live Integration', () => {
         expect(content).toBeDefined();
         expect(content?.type).toBe('toolCall');
         if (content?.type === 'toolCall') {
-          expect(content.callId).toBeDefined();
-          expect(content.toolName).toBeDefined();
-          expect(content.args).toBeDefined();
+          expect(content.id).toBeDefined();
+          expect(content.name).toBeDefined();
+          expect(content.arguments).toBeDefined();
         }
       });
       

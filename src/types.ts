@@ -529,11 +529,11 @@ export interface PiAssistantMessageEvent {
  */
 export interface PiToolCallContent {
   /** Tool call ID */
-  callId: string;
+  id: string;
   /** Tool name (user-facing) */
   name: string;
   /** Tool arguments */
-  args: unknown;
+  arguments: Record<string, any>;
 }
 
 /**

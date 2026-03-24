@@ -156,9 +156,9 @@ describe('updatePartialMessage', () => {
     partial = updatePartialMessage(partial, createToolCallEvent(toolCall1));
     expect(partial.toolCalls).toHaveLength(1);
     expect(partial.toolCalls[0]).toEqual({
-      callId: 'call_1',
+      id: 'call_1',
       name: 'tools_read', // Prefix stripped
-      args: { path: 'test.md' },
+      arguments: { path: 'test.md' },
     });
   });
 
@@ -208,7 +208,7 @@ describe('updatePartialMessage', () => {
     partial = updatePartialMessage(partial, createToolCallEvent(toolCall2));
     
     expect(partial.toolCalls).toHaveLength(2);
-    expect(partial.toolCalls.map(c => c.callId)).toEqual(['call_1', 'call_2']);
+    expect(partial.toolCalls.map(c => c.id)).toEqual(['call_1', 'call_2']);
   });
 
   it('should ignore state-change events', () => {
@@ -323,9 +323,9 @@ describe('convertToolCallToPi', () => {
     const piCall = convertToolCallToPi(toolCall);
     
     expect(piCall).toEqual({
-      callId: 'call_1',
+      id: 'call_1',
       name: 'tools_read',
-      args: { path: 'test.md' },
+      arguments: { path: 'test.md' },
     });
   });
 
@@ -340,9 +340,9 @@ describe('convertToolCallToPi', () => {
     const piCall = convertToolCallToPi(toolCall);
     
     expect(piCall).toEqual({
-      callId: 'call_1',
+      id: 'call_1',
       name: 'google_web_search',
-      args: { query: 'test' },
+      arguments: { query: 'test' },
     });
   });
 
@@ -364,15 +364,15 @@ describe('convertToolCallsToPi', () => {
   it('should convert array of tool calls', () => {
     const toolCalls: ToolCallMetadata[] = [
       {
-        callId: 'call_1',
-        name: 'mcp_tools_read',
-        args: {},
+      callId: 'call_1',
+      name: 'mcp_tools_read',
+      args: {},
         status: 'success',
       },
       {
-        callId: 'call_2',
-        name: 'google_web_search',
-        args: {},
+      callId: 'call_2',
+      name: 'google_web_search',
+      args: {},
         status: 'success',
       },
     ];
@@ -437,9 +437,9 @@ describe('translateToolCallEvent', () => {
     
     expect(piEvent.type).toBe('toolCall');
     expect(piEvent.content).toEqual({
-      callId: 'call_1',
+      id: 'call_1',
       name: 'tools_read',
-      args: { path: 'test.md' },
+      arguments: { path: 'test.md' },
     });
   });
 
@@ -581,7 +581,7 @@ describe('extractCompleteMessage', () => {
       text: 'Hello World',
       thinking: 'Let me think...',
       toolCalls: [
-        { callId: 'call_1', name: 'tools_read', args: {} },
+        { id: 'call_1', name: 'tools_read', arguments: {} },
       ],
     };
     
@@ -603,7 +603,7 @@ describe('hasContent', () => {
   });
 
   it('should return true for message with tool calls', () => {
-    const partial = { text: '', thinking: '', toolCalls: [{ callId: '1', name: 'read', args: {} }] };
+    const partial = { text: '', thinking: '', toolCalls: [{ id: '1', name: 'read', arguments: {} }] };
     expect(hasContent(partial)).toBe(true);
   });
 
@@ -615,7 +615,7 @@ describe('hasContent', () => {
 
 describe('hasToolCalls', () => {
   it('should return true when tool calls present', () => {
-    const partial = { text: '', thinking: '', toolCalls: [{ callId: '1', name: 'read', args: {} }] };
+    const partial = { text: '', thinking: '', toolCalls: [{ id: '1', name: 'read', arguments: {} }] };
     expect(hasToolCalls(partial)).toBe(true);
   });
 
@@ -738,7 +738,7 @@ describe('validatePartialMessage', () => {
     const partial = {
       text: 'Hello',
       thinking: '',
-      toolCalls: [{ name: 'read', args: {} } as any],
+      toolCalls: [{ name: 'read', arguments: {} } as any],
     };
     const validation = validatePartialMessage(partial);
     
@@ -752,7 +752,7 @@ describe('validatePartialMessage', () => {
     const partial = {
       text: 'Hello',
       thinking: '',
-      toolCalls: [{ callId: '1', args: {} } as any],
+      toolCalls: [{ id: '1', arguments: {} } as any],
     };
     const validation = validatePartialMessage(partial);
     
@@ -766,7 +766,7 @@ describe('validatePartialMessage', () => {
     const partial = {
       text: 'Hello',
       thinking: '',
-      toolCalls: [{ callId: '1', name: 'read' } as any],
+      toolCalls: [{ id: '1', name: 'read' } as any],
     };
     const validation = validatePartialMessage(partial);
     
@@ -781,7 +781,7 @@ describe('validatePartialMessage', () => {
       text: '',
       thinking: '',
       toolCalls: [
-        { callId: '1', name: 'read', args: { path: 'test.md' } },
+        { id: '1', name: 'read', arguments: { path: 'test.md' } },
       ],
     };
     const validation = validatePartialMessage(partial);
@@ -816,13 +816,13 @@ describe('unified rendering', () => {
     const nativePiCall = convertToolCallToPi(nativeToolCall);
     
     // Both should have same structure
-    expect(mcpPiCall).toHaveProperty('callId');
+    expect(mcpPiCall).toHaveProperty('id');
     expect(mcpPiCall).toHaveProperty('name');
-    expect(mcpPiCall).toHaveProperty('args');
+    expect(mcpPiCall).toHaveProperty('arguments');
     
-    expect(nativePiCall).toHaveProperty('callId');
+    expect(nativePiCall).toHaveProperty('id');
     expect(nativePiCall).toHaveProperty('name');
-    expect(nativePiCall).toHaveProperty('args');
+    expect(nativePiCall).toHaveProperty('arguments');
     
     // MCP prefix should be stripped, native should be preserved
     expect(mcpPiCall.name).toBe('tools_read');

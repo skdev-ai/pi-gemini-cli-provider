@@ -287,7 +287,7 @@ describe('streamSimple', () => {
       {
         callId: 'call_1',
         name: 'mcp_tools_search',
-        args: { query: 'test' },
+            args: { query: 'test' },
         status: 'scheduled',
       },
     ]);
@@ -319,9 +319,9 @@ describe('streamSimple', () => {
           { type: 'text', text: 'Let me search' },
           {
             type: 'toolCall',
-            callId: 'call_1',
-            toolName: 'tools_search',
-            args: { query: 'test' },
+            id: 'call_1',
+            name: 'tools_search',
+            arguments: { query: 'test' },
           },
         ],
       },
@@ -410,7 +410,7 @@ describe('streamSimple', () => {
       {
         callId: 'call_1',
         name: 'google_web_search',
-        args: { query: 'weather' },
+            args: { query: 'weather' },
         status: 'scheduled',
       },
     ]);
@@ -444,7 +444,7 @@ describe('streamSimple', () => {
       {
         callId: 'call_1',
         name: 'mcp_tools_search',
-        args: { query: 'test' },
+            args: { query: 'test' },
         status: 'scheduled',
       },
     ]);
@@ -543,7 +543,7 @@ describe('streamSimple', () => {
       {
         callId: 'call_1',
         name: 'mcp_tools_search',
-        args: { query: 'test' },
+            args: { query: 'test' },
         status: 'scheduled',
       },
     ]);
@@ -559,7 +559,7 @@ describe('streamSimple', () => {
         {
           callId: 'call_1',
           name: 'mcp_tools_search',
-          args: { query: 'test' },
+            args: { query: 'test' },
           status: 'scheduled',
         },
       ],

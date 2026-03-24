@@ -1,0 +1,32 @@
+// WARNING: excludeTools is a denylist. New tools added by Google in future versions will be auto-approved.
+// Version pinning to v0.34.0 is the safety net.
+{
+  "excludeTools": [
+    "replace",
+    "glob",
+    "codebase_investigator",
+    "enter_plan_mode",
+    "exit_plan_mode",
+    "generalist",
+    "read_file",
+    "read_many_files",
+    "list_directory",
+    "save_memory",
+    "grep_search",
+    "run_shell_command",
+    "write_file",
+    "write_todos",
+    "activate_skill",
+    "ask_user",
+    "cli_help"
+  ],
+  "folderTrust": true,
+  "mcpServers": {
+    "tools": {
+      "command": "node",
+      "args": [
+        "/home/skello/projects/pi-gemini-cli-provider/dist/mcp-bridge-server.js"
+      ]
+    }
+  }
+}

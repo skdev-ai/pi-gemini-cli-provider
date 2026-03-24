@@ -15,6 +15,7 @@ import {
   checkAvailability,
   checkA2AInstalled,
   checkA2APatched,
+  checkA2APendingToolAbortPatched,
 } from './availability.js';
 import { getA2APackageRoot } from './a2a-path.js';
 
@@ -101,6 +102,36 @@ describe('availability', () => {
     });
   });
 
+  describe('checkA2APendingToolAbortPatched()', () => {
+    it('returns false when marker is missing', () => {
+      vi.mocked(readFileSync).mockReturnValue('console.log("unpatched bundle");');
+
+      const result = checkA2APendingToolAbortPatched('/mock/path.mjs');
+
+      expect(result).toBe(false);
+    });
+
+    it('returns true when marker is present', () => {
+      vi.mocked(readFileSync).mockReturnValue(
+        'PATCH: preserve pending tools on input-required abort (pi-gemini-cli-provider)'
+      );
+
+      const result = checkA2APendingToolAbortPatched('/mock/path.mjs');
+
+      expect(result).toBe(true);
+    });
+
+    it('returns false on file read errors', () => {
+      vi.mocked(readFileSync).mockImplementation(() => {
+        throw new Error('File not found');
+      });
+
+      const result = checkA2APendingToolAbortPatched('/mock/path.mjs');
+
+      expect(result).toBe(false);
+    });
+  });
+
   describe('checkAvailability()', () => {
     it('returns CLI_NOT_FOUND when gemini CLI binary is missing', () => {
       // This will call the real checkCliBinary which searches PATH
@@ -131,6 +162,8 @@ describe('availability', () => {
         expect(result.a2a).toBeDefined();
         expect(result.a2a?.injectResultPatched).toBeDefined();
         expect(typeof result.a2a?.injectResultPatched).toBe('boolean');
+        expect(result.a2a?.pendingToolAbortPatched).toBeDefined();
+        expect(typeof result.a2a?.pendingToolAbortPatched).toBe('boolean');
       }
     });
   });

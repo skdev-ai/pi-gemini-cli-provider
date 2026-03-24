@@ -3,16 +3,17 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { installA2AServer, type InstallerContext } from './a2a-installer.js';
 import { getA2APath, getA2APackageRoot } from './a2a-path.js';
-import { checkA2AInstalled, checkA2APatched, checkA2AInjectResultPatched } from './availability.js';
+import { checkA2AInstalled, checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched } from './availability.js';
 import { applyInjectResultPatch } from './inject-result-patch.js';
 
-const UNPATCHED = "function isHeadlessMode(options) {\n  return options?.headless ?? false;\n}\nconst currentTask = wrapper.task;\n} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n}";
-const PATCHED = "function isHeadlessMode(options) { return false;\n  return options?.headless ?? false;\n}\nconst currentTask = wrapper.task; const _requestedModel = x;\n} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n} else if (outcomeString === 'inject_result') {\n  // PATCH: inject_result support\n  return true;\n}";
+const UNPATCHED = "function isHeadlessMode(options) {\n  return options?.headless ?? false;\n}\nconst currentTask = wrapper.task;\n} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n}\nif (abortSignal.aborted) {\n                currentTask.cancelPendingTools(\"Execution aborted\");\n            }";
+const PATCHED = "function isHeadlessMode(options) { return false;\n  return options?.headless ?? false;\n}\nconst currentTask = wrapper.task; const _requestedModel = x;\n} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n} else if (outcomeString === 'inject_result') {\n  // PATCH: inject_result support\n  return true;\n}\nif (abortSignal.aborted) {\n                // PATCH: preserve pending tools on input-required abort (pi-gemini-cli-provider)\n                if (currentTask.taskState === \"input-required\") {\n                    logger.info(\"[CoderAgentExecutor] Task \" + taskId + \" aborted while awaiting input. Preserving pending tools.\");\n                }\n                else {\n                    currentTask.cancelPendingTools(\"Execution aborted\");\n                }\n            }";
 
 vi.mock('./availability.js', () => ({
   checkA2AInstalled: vi.fn(),
   checkA2APatched: vi.fn(),
   checkA2AInjectResultPatched: vi.fn(),
+  checkA2APendingToolAbortPatched: vi.fn(),
 }));
 vi.mock('./a2a-path.js', () => ({
   getA2APath: vi.fn(),
@@ -41,6 +42,7 @@ describe('a2a-installer', () => {
     vi.mocked(checkA2AInstalled).mockReturnValue(false);
     vi.mocked(checkA2APatched).mockReturnValue(false);
     vi.mocked(checkA2AInjectResultPatched).mockReturnValue(false);
+    vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(false);
     vi.mocked(existsSync).mockReturnValue(false);
     vi.mocked(mkdirSync).mockReturnValue(undefined);
     vi.mocked(writeFileSync).mockReturnValue(undefined);
@@ -65,13 +67,15 @@ describe('a2a-installer', () => {
       vi.mocked(checkA2AInstalled).mockReturnValue(true);
       vi.mocked(checkA2APatched).mockReturnValue(true);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(true);
+      vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
       vi.mocked(checkA2APatched).mockReturnValue(true);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(true);
+      vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
       vi.mocked(readFileSync).mockReturnValue(PATCHED);
 
       const result = await installA2AServer(ctx);
       expect(result).toBe(true);
-      expect(ctx.ui.notify).toHaveBeenCalledWith('A2A already installed and patched with all 3 patches');
+      expect(ctx.ui.notify).toHaveBeenCalledWith('A2A already installed and patched with all 4 patches');
     });
 
     it('returns true when patches missing', async () => {
@@ -82,19 +86,27 @@ describe('a2a-installer', () => {
       vi.mocked(checkA2AInstalled).mockReturnValue(true);
       vi.mocked(checkA2APatched).mockReturnValue(false);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(false);
+      vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(false);
       vi.mocked(ctx.ui.confirm).mockResolvedValue(true);
 
       let content = UNPATCHED;
       vi.mocked(readFileSync).mockImplementation((p: any) => {
         const path = p.toString();
         if (path.includes('a2a-server.mjs') && !path.includes('.bak')) return content;
+        if (path.includes('.bak.version')) return '0.34.0';
         return '';
       });
       vi.mocked(writeFileSync).mockImplementation((p: any, c: any) => {
         const path = p.toString();
         if (path.includes('a2a-server.mjs') && !path.includes('.bak')) content = c.toString();
       });
-      vi.mocked(applyInjectResultPatch).mockImplementation(() => { content = PATCHED; return true; });
+      vi.mocked(applyInjectResultPatch).mockImplementation(() => {
+        content = content.replace(
+          "} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n}",
+          "} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n} else if (outcomeString === 'inject_result') {\n  // PATCH: inject_result support\n  return true;\n}"
+        );
+        return true;
+      });
 
       const result = await installA2AServer(ctx);
       expect(result).toBe(true);
@@ -119,13 +131,20 @@ describe('a2a-installer', () => {
       vi.mocked(readFileSync).mockImplementation((p: any) => {
         const path = p.toString();
         if (path.includes('a2a-server.mjs') && !path.includes('.bak')) return content;
+        if (path.includes('.bak.version')) return '0.34.0';
         return '';
       });
       vi.mocked(writeFileSync).mockImplementation((p: any, c: any) => {
         const path = p.toString();
         if (path.includes('a2a-server.mjs') && !path.includes('.bak')) content = c.toString();
       });
-      vi.mocked(applyInjectResultPatch).mockImplementation(() => { content = PATCHED; return true; });
+      vi.mocked(applyInjectResultPatch).mockImplementation(() => {
+        content = content.replace(
+          "} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n}\nif (abortSignal.aborted) {",
+          "} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n} else if (outcomeString === 'inject_result') {\n  // PATCH: inject_result support\n  return true;\n}\nif (abortSignal.aborted) {"
+        );
+        return true;
+      });
 
       const result = await installA2AServer(ctx);
       expect(result).toBe(true);
@@ -177,7 +196,7 @@ describe('a2a-installer', () => {
       vi.mocked(checkA2AInstalled).mockReturnValue(false);
     };
 
-    it('applies all 3 patches', async () => {
+    it('applies all 4 patches', async () => {
       setup();
       vi.mocked(ctx.ui.confirm).mockResolvedValue(true);
       vi.mocked(execSync).mockImplementation((c: any) => c.toString().includes('npm') ? '' : '/usr/bin/gemini');
@@ -187,13 +206,20 @@ describe('a2a-installer', () => {
       vi.mocked(readFileSync).mockImplementation((p: any) => {
         const path = p.toString();
         if (path.includes('a2a-server.mjs') && !path.includes('.bak')) return content;
+        if (path.includes('.bak.version')) return '0.34.0';
         return '';
       });
       vi.mocked(writeFileSync).mockImplementation((p: any, c: any) => {
         const path = p.toString();
         if (path.includes('a2a-server.mjs') && !path.includes('.bak')) content = c.toString();
       });
-      vi.mocked(applyInjectResultPatch).mockImplementation(() => { content = PATCHED; return true; });
+      vi.mocked(applyInjectResultPatch).mockImplementation(() => {
+        content = content.replace(
+          "} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n}\nif (abortSignal.aborted) {",
+          "} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n} else if (outcomeString === 'inject_result') {\n  // PATCH: inject_result support\n  return true;\n}\nif (abortSignal.aborted) {"
+        );
+        return true;
+      });
 
       await installA2AServer(ctx);
       expect(writeFileSync).toHaveBeenCalled();
@@ -217,9 +243,10 @@ describe('a2a-installer', () => {
       vi.mocked(getA2APackageRoot).mockReturnValue(pkgRoot);
       vi.mocked(checkA2APatched).mockReturnValue(true);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(true);
+      vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
       vi.mocked(readFileSync).mockReturnValue(PATCHED);
       await installA2AServer(ctx);
-      expect(ctx.ui.notify).toHaveBeenCalledWith('A2A already installed and patched with all 3 patches');
+      expect(ctx.ui.notify).toHaveBeenCalledWith('A2A already installed and patched with all 4 patches');
     });
   });
 
@@ -232,20 +259,46 @@ describe('a2a-installer', () => {
       vi.mocked(applyInjectResultPatch).mockReturnValue(true);
       vi.mocked(checkA2APatched).mockReturnValue(true);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(true);
+      vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
       vi.mocked(readFileSync).mockReturnValue(PATCHED);
       await installA2AServer(ctx);
       expect(ctx.ui.notify).toHaveBeenCalledWith('Patches applied and verified successfully');
     });
 
-    it('restores backup on failure', async () => {
+    it('restores backup on verification failure', async () => {
       vi.mocked(existsSync).mockImplementation((p: any) => p.toString().includes('oauth') || p.toString().includes('.bak'));
       vi.mocked(ctx.ui.confirm).mockResolvedValue(true);
       vi.mocked(execSync).mockImplementation((c: any) => c.toString().includes('npm') ? '' : '/usr/bin/gemini');
       vi.mocked(getA2APackageRoot).mockReturnValue(pkgRoot);
-      vi.mocked(applyInjectResultPatch).mockReturnValue(true);
-      const incomplete = "function isHeadlessMode(options) { return false; }\nconst currentTask = wrapper.task; const _requestedModel = x;";
-      vi.mocked(readFileSync).mockReturnValue(incomplete);
-      await expect(installA2AServer(ctx)).rejects.toThrow('inject_result support not applied');
+
+      let content = UNPATCHED;
+      let readCount = 0;
+      vi.mocked(readFileSync).mockImplementation((p: any) => {
+        const path = p.toString();
+        if (path.includes('a2a-server.mjs') && !path.includes('.bak')) {
+          readCount += 1;
+          if (readCount >= 3) {
+            return content.replace('PATCH: preserve pending tools on input-required abort (pi-gemini-cli-provider)', '');
+          }
+          return content;
+        }
+        if (path.includes('.bak')) return UNPATCHED;
+        if (path.includes('.bak.version')) return '0.34.0';
+        return '';
+      });
+      vi.mocked(writeFileSync).mockImplementation((p: any, c: any) => {
+        const path = p.toString();
+        if (path.includes('a2a-server.mjs') && !path.includes('.bak')) content = c.toString();
+      });
+      vi.mocked(applyInjectResultPatch).mockImplementation(() => {
+        content = content.replace(
+          "} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n}\nif (abortSignal.aborted) {",
+          "} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n} else if (outcomeString === 'inject_result') {\n  // PATCH: inject_result support\n  return true;\n}\nif (abortSignal.aborted) {"
+        );
+        return true;
+      });
+
+      await expect(installA2AServer(ctx)).rejects.toThrow('pending-tool abort preservation not applied');
       expect(writeFileSync).toHaveBeenCalledWith(expect.stringContaining('.bak'), expect.any(String), 'utf-8');
     });
   });
@@ -261,13 +314,20 @@ describe('a2a-installer', () => {
       vi.mocked(readFileSync).mockImplementation((p: any) => {
         const path = p.toString();
         if (path.includes('a2a-server.mjs') && !path.includes('.bak')) return content;
+        if (path.includes('.bak.version')) return '0.34.0';
         return '';
       });
       vi.mocked(writeFileSync).mockImplementation((p: any, c: any) => {
         const path = p.toString();
         if (path.includes('a2a-server.mjs') && !path.includes('.bak')) content = c.toString();
       });
-      vi.mocked(applyInjectResultPatch).mockImplementation(() => { content = PATCHED; return true; });
+      vi.mocked(applyInjectResultPatch).mockImplementation(() => {
+        content = content.replace(
+          "} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n}\nif (abortSignal.aborted) {",
+          "} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n} else if (outcomeString === 'inject_result') {\n  // PATCH: inject_result support\n  return true;\n}\nif (abortSignal.aborted) {"
+        );
+        return true;
+      });
 
       await installA2AServer(ctx);
       expect(mkdirSync).toHaveBeenCalledWith(expect.stringContaining('a2a-workspace/.gemini'), { recursive: true });

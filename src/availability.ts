@@ -51,7 +51,7 @@ export function checkCredentialFile(): boolean {
  * 
  * @returns Object with `available` boolean and optional `reason` string
  */
-export function checkAvailability(): { available: boolean; reason?: string; a2a?: { installed: boolean; patched: boolean; injectResultPatched: boolean } } {
+export function checkAvailability(): { available: boolean; reason?: string; a2a?: { installed: boolean; patched: boolean; injectResultPatched: boolean; pendingToolAbortPatched: boolean } } {
   // Check if gemini CLI is installed
   if (!checkCliBinary()) {
     return {
@@ -74,6 +74,7 @@ export function checkAvailability(): { available: boolean; reason?: string; a2a?
   const a2aBundlePath = packageRoot ? join(packageRoot, 'dist', 'a2a-server.mjs') : null;
   const a2aPatched = a2aBundlePath ? checkA2APatched(a2aBundlePath) : false;
   const injectResultPatched = a2aBundlePath ? checkInjectResultPatched(a2aBundlePath) : false;
+  const pendingToolAbortPatched = a2aBundlePath ? checkA2APendingToolAbortPatched(a2aBundlePath) : false;
 
   return { 
     available: true,
@@ -81,6 +82,7 @@ export function checkAvailability(): { available: boolean; reason?: string; a2a?
       installed: a2aInstalled,
       patched: a2aPatched,
       injectResultPatched,
+      pendingToolAbortPatched,
     }
   };
 }
@@ -108,6 +110,22 @@ export function checkA2APatched(filePath: string): boolean {
     return content.includes('_requestedModel');
   } catch {
     // File not found, permission denied, or other errors
+    return false;
+  }
+}
+
+/**
+ * Checks if the A2A server bundle has been patched to preserve pending tools
+ * when an input-required task aborts after the SSE connection closes.
+ *
+ * @param filePath - Path to the A2A server file to check
+ * @returns true if the pending-tool abort preservation patch is present, false otherwise
+ */
+export function checkA2APendingToolAbortPatched(filePath: string): boolean {
+  try {
+    const content = readFileSync(filePath, 'utf-8');
+    return content.includes('PATCH: preserve pending tools on input-required abort');
+  } catch {
     return false;
   }
 }

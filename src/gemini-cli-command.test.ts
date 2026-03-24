@@ -15,7 +15,7 @@ import { installA2AServer } from './a2a-installer.js';
 import { startServer, stopServer, getServerState } from './a2a-lifecycle.js';
 import { getAvailableModelIds } from './provider-registration.js';
 import { getA2APackageRoot } from './a2a-path.js';
-import { checkA2APatched, checkA2AInjectResultPatched } from './availability.js';
+import { checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched } from './availability.js';
 
 // Mock dependencies
 vi.mock('./a2a-installer.js', () => ({
@@ -40,6 +40,7 @@ vi.mock('./a2a-path.js', () => ({
 vi.mock('./availability.js', () => ({
   checkA2APatched: vi.fn(),
   checkA2AInjectResultPatched: vi.fn(),
+  checkA2APendingToolAbortPatched: vi.fn(),
 }));
 
 describe('gemini-cli-command', () => {
@@ -217,6 +218,7 @@ describe('gemini-cli-command', () => {
       vi.mocked(getA2APackageRoot).mockReturnValue('/mock/a2a');
       vi.mocked(checkA2APatched).mockReturnValue(true);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(true);
+      vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
       vi.mocked(getAvailableModelIds).mockResolvedValue(['gemini-2.5-pro']);
 
       await handleGeminiCliCommand('status', ctx);
@@ -245,6 +247,7 @@ describe('gemini-cli-command', () => {
       vi.mocked(getA2APackageRoot).mockReturnValue('/mock/a2a');
       vi.mocked(checkA2APatched).mockReturnValue(true);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(true);
+      vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
       vi.mocked(getAvailableModelIds).mockResolvedValue([]);
 
       await handleGeminiCliCommand('status', ctx);
@@ -269,6 +272,7 @@ describe('gemini-cli-command', () => {
       vi.mocked(getA2APackageRoot).mockReturnValue('/mock/a2a');
       vi.mocked(checkA2APatched).mockReturnValue(true);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(false);
+      vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(false);
       vi.mocked(getAvailableModelIds).mockResolvedValue([]);
 
       await handleGeminiCliCommand('status', ctx);
@@ -277,6 +281,7 @@ describe('gemini-cli-command', () => {
       expect(output).toContain('**Patch Status:**');
       expect(output).toContain('Patch 2 (_model): ✓');
       expect(output).toContain('Patch 3 (inject_result): ✗');
+      expect(output).toContain('Patch 4 (preserve pending tools on input-required abort): ✗');
       expect(output).toContain('Missing patches detected');
     });
 

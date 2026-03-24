@@ -68,7 +68,9 @@ export interface SearchError {
     /** Detected when server respawn after health check failure fails - Bugfix 260320-1 */
     | 'A2A_RESPAWN_FAILED'
     /** Detected when inject_result patch is missing from A2A bundle - S02 */
-    | 'A2A_INJECT_RESULT_NOT_PATCHED';
+    | 'A2A_INJECT_RESULT_NOT_PATCHED'
+    /** Detected when pending tools are cancelled on abort instead of preserved during input-required state - Bugfix 260324-10 */
+    | 'A2A_PENDING_TOOL_ABORT_NOT_PATCHED';
   /** Human-readable error message */
   message: string;
 }

@@ -14,7 +14,7 @@ import {
   stopServer,
   __testing__,
 } from './a2a-lifecycle.js';
-import { checkA2AInjectResultPatched } from './availability.js';
+import { checkA2AInjectResultPatched, checkA2APendingToolAbortPatched } from './availability.js';
 import { getA2APackageRoot } from './a2a-path.js';
 import { isPortInUse, isServerHealthy } from './port-check.js';
 
@@ -22,6 +22,7 @@ import { isPortInUse, isServerHealthy } from './port-check.js';
 vi.mock('./availability.js', () => ({
   checkA2APatched: vi.fn(),
   checkA2AInjectResultPatched: vi.fn(),
+  checkA2APendingToolAbortPatched: vi.fn(),
 }));
 
 vi.mock('./a2a-path.js', () => ({
@@ -88,6 +89,7 @@ describe('a2a-lifecycle inject_result patch verification', () => {
       
       // Mock inject_result patch as missing
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(false);
+      vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
       
       // Attempt to start server - should throw
       await expect(startServer()).rejects.toThrowError('inject_result patch not found in A2A bundle');
@@ -112,6 +114,7 @@ describe('a2a-lifecycle inject_result patch verification', () => {
       
       // Mock inject_result patch (shouldn't be called due to short-circuit)
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(false);
+      vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(false);
       
       // Attempt to start server - should throw
       await expect(startServer()).rejects.toThrowError('A2A patch not found');
@@ -121,7 +124,7 @@ describe('a2a-lifecycle inject_result patch verification', () => {
       expect(error.type).toBe('A2A_NOT_PATCHED');
     });
 
-    it('proceeds with startup when both patches are present', async () => {
+    it('proceeds with startup when all required patches are present', async () => {
       // Mock port check to indicate no existing server
       vi.mocked(isPortInUse).mockResolvedValue(false);
       vi.mocked(isServerHealthy).mockResolvedValue(false);
@@ -129,10 +132,11 @@ describe('a2a-lifecycle inject_result patch verification', () => {
       // Mock package root
       vi.mocked(getA2APackageRoot).mockReturnValue(mockPackageRoot);
       
-      // Mock both patches as present
+      // Mock all required patches as present
       const { checkA2APatched } = await import('./availability.js');
       vi.mocked(checkA2APatched).mockReturnValue(true);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(true);
+      vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
       
       // Mock spawn to create a fake child process
       const mockStdout = {

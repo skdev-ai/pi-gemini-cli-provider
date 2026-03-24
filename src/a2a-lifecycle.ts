@@ -15,7 +15,7 @@ import { spawn, type ChildProcess, exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { A2AServerState, SearchError } from './types.js';
 import { getA2APackageRoot } from './a2a-path.js';
-import { checkA2APatched, checkA2AInjectResultPatched } from './availability.js';
+import { checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched } from './availability.js';
 import { isPortInUse, isServerHealthy } from './port-check.js';
 import { debugLog } from './logger.js';
 import { resolveWorkspacePath } from './workspace-generator.js';
@@ -303,13 +303,14 @@ export async function startServer(config?: A2AStartupConfig): Promise<void> {
       const serverPath = packageRoot + '/dist/a2a-server.mjs';
       const hasPatch2 = checkA2APatched(serverPath);
       const hasPatch3 = checkA2AInjectResultPatched();
+      const hasPatch4 = checkA2APendingToolAbortPatched(serverPath);
       
-      if (!hasPatch2 || !hasPatch3) {
-        log(`Warning: Reusing server but patches missing (Patch2: ${hasPatch2}, Patch3: ${hasPatch3})`);
+      if (!hasPatch2 || !hasPatch3 || !hasPatch4) {
+        log(`Warning: Reusing server but patches missing (Patch2: ${hasPatch2}, Patch3: ${hasPatch3}, Patch4: ${hasPatch4})`);
         // Don't throw here - let the server run but log the warning
         // The caller can decide whether to restart
       } else {
-        log('Required patches (Patch 2 and Patch 3) verified on running server');
+        log('Required patches (Patch 2, Patch 3, and Patch 4) verified on running server');
       }
     }
     
@@ -358,6 +359,10 @@ export async function startServer(config?: A2AStartupConfig): Promise<void> {
       
       if (!checkA2AInjectResultPatched()) {
         throw createSearchError('A2A_INJECT_RESULT_NOT_PATCHED', 'inject_result patch not found in A2A bundle');
+      }
+
+      if (!checkA2APendingToolAbortPatched(serverPath)) {
+        throw createSearchError('A2A_PENDING_TOOL_ABORT_NOT_PATCHED', 'pending-tool abort preservation patch not found in A2A bundle');
       }
 
       // Spawn the server process using node directly with the bundle path

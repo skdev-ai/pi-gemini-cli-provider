@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getA2APath, getA2APackageRoot } from './a2a-path.js';
-import { checkA2AInstalled, checkA2APatched, checkA2AInjectResultPatched } from './availability.js';
+import { checkA2AInstalled, checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched } from './availability.js';
 import { applyInjectResultPatch } from './inject-result-patch.js';
 import { generateWorkspace } from './workspace-generator.js';
 
@@ -81,9 +81,10 @@ function preCheck(ctx: InstallerContext): boolean {
       const hasPatch1 = content.includes('isHeadlessMode(options) { return false;');
       const hasPatch2 = checkA2APatched(a2aPath);
       const hasPatch3 = checkA2AInjectResultPatched();
+      const hasPatch4 = checkA2APendingToolAbortPatched(a2aPath);
       
-      if (hasPatch1 && hasPatch2 && hasPatch3) {
-        ctx.ui.notify('A2A already installed and patched with all 3 patches');
+      if (hasPatch1 && hasPatch2 && hasPatch3 && hasPatch4) {
+        ctx.ui.notify('A2A already installed and patched with all 4 patches');
         return false; // Signal that installation should skip (idempotent)
       }
       
@@ -91,6 +92,7 @@ function preCheck(ctx: InstallerContext): boolean {
       if (!hasPatch1) missingPatches.push('Patch 1 (headless)');
       if (!hasPatch2) missingPatches.push('Patch 2 (_model)');
       if (!hasPatch3) missingPatches.push('Patch 3 (inject_result)');
+      if (!hasPatch4) missingPatches.push('Patch 4 (preserve pending tools on input-required abort)');
       
       ctx.ui.notify(`A2A installed but missing: ${missingPatches.join(', ')}, re-applying...`);
       return true; // Proceed to apply missing patches
@@ -122,10 +124,11 @@ async function requestApproval(ctx: InstallerContext): Promise<boolean> {
     'Requires Google OAuth authentication\n' +
     'Version pinned for stability — do not update without re-patching\n' +
     'Creates restricted workspace allowing only google_web_search tool\n' +
-    'Applies 3 patches:\n' +
+    'Applies 4 patches:\n' +
     '  • Patch 1: Headless mode fix (run without interactive terminal)\n' +
     '  • Patch 2: _model per-request model override\n' +
-    '  • Patch 3: inject_result support for tool result reinjection';
+    '  • Patch 3: inject_result support for tool result reinjection\n' +
+    '  • Patch 4: preserve pending tools while awaiting input after SSE disconnect';
   
   const approved = await ctx.ui.confirm(message, {
     title: 'Install A2A Server',
@@ -245,8 +248,12 @@ function applyPatches(ctx: InstallerContext): void {
     let content = readFileSync(a2aPath, 'utf-8');
     
     // Check if already patched
-    if (content.includes('_requestedModel') && content.includes('PATCH: inject_result support')) {
-      ctx.ui.notify('Already patched with Patch 2 and Patch 3, skipping patch application');
+    if (
+      content.includes('_requestedModel') &&
+      content.includes('PATCH: inject_result support') &&
+      content.includes('PATCH: preserve pending tools on input-required abort')
+    ) {
+      ctx.ui.notify('Already patched with Patch 2, Patch 3, and Patch 4, skipping patch application');
       return;
     }
     
@@ -300,6 +307,18 @@ function applyPatches(ctx: InstallerContext): void {
     if (!injectResultApplied) {
       throw new Error('Failed to apply inject_result patch');
     }
+
+    // Patch 4: preserve pending tools when abort fires while awaiting input
+    const patch4Target = "if (abortSignal.aborted) {\n                currentTask.cancelPendingTools(\"Execution aborted\");\n            }";
+    if (!content.includes('PATCH: preserve pending tools on input-required abort')) {
+      const contentWithPatch3 = readFileSync(a2aPath, 'utf-8');
+      if (!contentWithPatch3.includes(patch4Target)) {
+        throw new Error('Patch target not found: abortSignal input-required guard');
+      }
+
+      const patch4Replacement = `if (abortSignal.aborted) {\n                // PATCH: preserve pending tools on input-required abort (pi-gemini-cli-provider)\n                if (currentTask.taskState === \"input-required\") {\n                    logger.info(\"[CoderAgentExecutor] Task \" + taskId + \" aborted while awaiting input. Preserving pending tools.\");\n                }\n                else {\n                    currentTask.cancelPendingTools(\"Execution aborted\");\n                }\n            }`;
+      writeFileSync(a2aPath, contentWithPatch3.replace(patch4Target, patch4Replacement), 'utf-8');
+    }
     
     ctx.ui.notify('Patches applied, verifying...');
   } catch (error: any) {
@@ -332,8 +351,10 @@ function applyPatches(ctx: InstallerContext): void {
  * Phase 4: Verification - Validates that patches were applied correctly.
  * 
  * Checks:
- * 1. Patch 2: _requestedModel marker present
- * 2. Patch 3: inject_result marker present
+ * 1. Patch 1: headless marker present
+ * 2. Patch 2: _requestedModel marker present
+ * 3. Patch 3: inject_result marker present
+ * 4. Patch 4: input-required abort preservation marker present
  * 
  * If verification fails:
  * - Restores from .bak backup
@@ -395,6 +416,19 @@ function verifyPatches(ctx: InstallerContext): void {
         rmSync(a2aPath + '.bak.version');
       }
       throw new Error('Patch verification failed: inject_result support not applied');
+    }
+
+    // Verify Patch 4
+    if (!content.includes('PATCH: preserve pending tools on input-required abort')) {
+      // Restore backup
+      if (existsSync(a2aPath + '.bak')) {
+        const backupContent = readFileSync(a2aPath + '.bak', 'utf-8');
+        writeFileSync(a2aPath, backupContent, 'utf-8');
+      }
+      if (existsSync(a2aPath + '.bak.version')) {
+        rmSync(a2aPath + '.bak.version');
+      }
+      throw new Error('Patch verification failed: pending-tool abort preservation not applied');
     }
     
     ctx.ui.notify('Patches applied and verified successfully');

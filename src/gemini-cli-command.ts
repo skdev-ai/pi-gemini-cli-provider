@@ -16,7 +16,7 @@ import { startServer, stopServer, getServerState } from './a2a-lifecycle.js';
 import { getAvailableModelIds } from './provider-registration.js';
 import { resolveWorkspacePath } from './workspace-generator.js';
 import { getA2APackageRoot } from './a2a-path.js';
-import { checkA2APatched, checkA2AInjectResultPatched } from './availability.js';
+import { checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched } from './availability.js';
 
 // ============================================================================
 // Command Handler
@@ -116,14 +116,16 @@ async function handleStatus(
     
     const hasPatch2 = checkA2APatched(serverPath);
     const hasPatch3 = checkA2AInjectResultPatched();
+    const hasPatch4 = checkA2APendingToolAbortPatched(serverPath);
 
     lines.push('');
     lines.push('**Patch Status:**');
     lines.push(`- Patch 1 (headless): ${hasPatch1 ? '✓' : '✗'}`);
     lines.push(`- Patch 2 (_model): ${hasPatch2 ? '✓' : '✗'}`);
     lines.push(`- Patch 3 (inject_result): ${hasPatch3 ? '✓' : '✗'}`);
+    lines.push(`- Patch 4 (preserve pending tools on input-required abort): ${hasPatch4 ? '✓' : '✗'}`);
 
-    if (!hasPatch2 || !hasPatch3) {
+    if (!hasPatch1 || !hasPatch2 || !hasPatch3 || !hasPatch4) {
       lines.push('');
       lines.push('⚠️ Missing patches detected. Run `/gemini-cli install-a2a` to apply.');
     }

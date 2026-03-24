@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { streamSimple, type AssistantMessageEvent } from './stream-simple.js';
+import { streamSimple, streamSimpleGsd, type AssistantMessageEvent } from './stream-simple.js';
 import { sendMessageStream, injectResult, approveToolCall } from './a2a-client.js';
 import { parseSSEStream } from './sse-parser.js';
 import {
@@ -663,6 +663,191 @@ describe('streamSimple', () => {
     expect(events[2]).toMatchObject({
       type: 'thinking_delta',
       delta: 'Thinking step 1',
+    });
+  });
+});
+
+describe('streamSimpleGsd', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockClearAllTasks();
+    mockIncrementProviderTaskCount.mockResolvedValue();
+  });
+
+  it('extracts text from block-array user content', async () => {
+    mockCreateTask.mockReturnValue({
+      taskId: 'task_user_blocks',
+      contextId: 'ctx_user_blocks',
+      state: 'submitted',
+      awaitingApproval: false,
+      pendingToolCalls: [],
+      isTerminal: false,
+    });
+
+    mockSendMessageStream.mockResolvedValue({
+      taskId: 'task_user_blocks',
+      contextId: 'ctx_user_blocks',
+      sseStream: new ReadableStream(),
+      metadata: { url: 'http://localhost:41242/', requestId: 'req_user_blocks' },
+    });
+
+    mockParseSSEStream.mockImplementation(async function* () {
+      yield createStateChangeEvent('completed', false, true);
+    });
+
+    mockGetTaskState.mockReturnValue({
+      taskId: 'task_user_blocks',
+      contextId: 'ctx_user_blocks',
+      state: 'completed',
+      awaitingApproval: false,
+      pendingToolCalls: [],
+      isTerminal: true,
+    });
+
+    const stream = streamSimpleGsd(
+      { id: 'gemini-a2a' } as any,
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Hello. What model are you?' }],
+            timestamp: Date.now(),
+          },
+        ],
+      },
+    );
+
+    await collectEvents(stream);
+
+    expect(mockSendMessageStream).toHaveBeenCalledWith({
+      prompt: 'Hello. What model are you?',
+      taskId: 'task_user_blocks',
+      contextId: 'ctx_user_blocks',
+      model: 'gemini-a2a',
+      signal: undefined,
+    });
+  });
+
+  it('uses the last user message instead of a trailing assistant message', async () => {
+    mockCreateTask.mockReturnValue({
+      taskId: 'task_trailing_assistant',
+      contextId: 'ctx_trailing_assistant',
+      state: 'submitted',
+      awaitingApproval: false,
+      pendingToolCalls: [],
+      isTerminal: false,
+    });
+
+    mockSendMessageStream.mockResolvedValue({
+      taskId: 'task_trailing_assistant',
+      contextId: 'ctx_trailing_assistant',
+      sseStream: new ReadableStream(),
+      metadata: { url: 'http://localhost:41242/', requestId: 'req_trailing_assistant' },
+    });
+
+    mockParseSSEStream.mockImplementation(async function* () {
+      yield createStateChangeEvent('completed', false, true);
+    });
+
+    mockGetTaskState.mockReturnValue({
+      taskId: 'task_trailing_assistant',
+      contextId: 'ctx_trailing_assistant',
+      state: 'completed',
+      awaitingApproval: false,
+      pendingToolCalls: [],
+      isTerminal: true,
+    });
+
+    const stream = streamSimpleGsd(
+      { id: 'gemini-a2a' } as any,
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'First question' }],
+            timestamp: Date.now() - 10,
+          },
+          {
+            role: 'assistant',
+            content: [],
+            timestamp: Date.now() - 5,
+          },
+          {
+            role: 'user',
+            content: [{ type: 'text', text: 'Latest user prompt' }],
+            timestamp: Date.now() - 3,
+          },
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Prior assistant output' }],
+            timestamp: Date.now(),
+          },
+        ],
+      },
+    );
+
+    await collectEvents(stream);
+
+    expect(mockSendMessageStream).toHaveBeenCalledWith({
+      prompt: 'Latest user prompt',
+      taskId: 'task_trailing_assistant',
+      contextId: 'ctx_trailing_assistant',
+      model: 'gemini-a2a',
+      signal: undefined,
+    });
+  });
+
+  it('preserves legacy string user content', async () => {
+    mockCreateTask.mockReturnValue({
+      taskId: 'task_string_prompt',
+      contextId: 'ctx_string_prompt',
+      state: 'submitted',
+      awaitingApproval: false,
+      pendingToolCalls: [],
+      isTerminal: false,
+    });
+
+    mockSendMessageStream.mockResolvedValue({
+      taskId: 'task_string_prompt',
+      contextId: 'ctx_string_prompt',
+      sseStream: new ReadableStream(),
+      metadata: { url: 'http://localhost:41242/', requestId: 'req_string_prompt' },
+    });
+
+    mockParseSSEStream.mockImplementation(async function* () {
+      yield createStateChangeEvent('completed', false, true);
+    });
+
+    mockGetTaskState.mockReturnValue({
+      taskId: 'task_string_prompt',
+      contextId: 'ctx_string_prompt',
+      state: 'completed',
+      awaitingApproval: false,
+      pendingToolCalls: [],
+      isTerminal: true,
+    });
+
+    const stream = streamSimpleGsd(
+      { id: 'gemini-a2a' } as any,
+      {
+        messages: [
+          {
+            role: 'user',
+            content: 'Legacy string prompt',
+            timestamp: Date.now(),
+          },
+        ],
+      },
+    );
+
+    await collectEvents(stream);
+
+    expect(mockSendMessageStream).toHaveBeenCalledWith({
+      prompt: 'Legacy string prompt',
+      taskId: 'task_string_prompt',
+      contextId: 'ctx_string_prompt',
+      model: 'gemini-a2a',
+      signal: undefined,
     });
   });
 });

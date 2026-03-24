@@ -290,16 +290,50 @@ export function streamSimple(params: StreamSimpleParams): {
   return { stream, result: resultPromise };
 }
 
+function extractPromptFromContext(context: Context): string {
+  if (!context || !Array.isArray(context.messages)) {
+    return '';
+  }
+
+  for (let i = context.messages.length - 1; i >= 0; i -= 1) {
+    const message = context.messages[i];
+
+    if (typeof message !== 'object' || message === null || !('role' in message)) {
+      continue;
+    }
+
+    if ((message as { role?: unknown }).role !== 'user' || !('content' in message)) {
+      continue;
+    }
+
+    const content = (message as { content?: unknown }).content;
+
+    if (typeof content === 'string') {
+      return content;
+    }
+
+    if (!Array.isArray(content)) {
+      return '';
+    }
+
+    return content
+      .filter(
+        (block): block is { type: 'text'; text?: unknown } =>
+          typeof block === 'object' && block !== null && 'type' in block && (block as { type?: unknown }).type === 'text',
+      )
+      .map((block) => (typeof block.text === 'string' ? block.text : ''))
+      .join('');
+  }
+
+  return '';
+}
+
 export function streamSimpleGsd(
   model: Model,
   context: Context,
   options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
-  const lastMessage = context.messages[context.messages.length - 1];
-  const prompt =
-    typeof lastMessage === 'object' && lastMessage && 'content' in lastMessage
-      ? (lastMessage as any).content
-      : '';
+  const prompt = extractPromptFromContext(context);
 
   const { stream } = streamSimple({
     prompt,

@@ -7,13 +7,25 @@ import {
 } from './result-extractor.js';
 
 describe('result-extractor', () => {
-  it('detects re-calls from toolResult messages', () => {
+  it('detects re-calls when the last message is a toolResult', () => {
     expect(
       detectReCall([
         { role: 'assistant', content: [] },
         { role: 'toolResult', toolCallId: 'c1', toolName: 'read', content: [] },
       ]),
     ).toBe(true);
+  });
+
+  it('does not detect re-call from stale historical toolResult messages', () => {
+    expect(
+      detectReCall([
+        { role: 'user', content: [] },
+        { role: 'assistant', content: [] },
+        { role: 'toolResult', toolCallId: 'c1', toolName: 'read', content: [] },
+        { role: 'assistant', content: [] },
+        { role: 'user', content: [] },
+      ]),
+    ).toBe(false);
   });
 
   it('extracts tool result messages in order', () => {

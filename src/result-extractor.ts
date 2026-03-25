@@ -15,22 +15,25 @@ import type { ExtractedToolResult, PiToolResultMessage } from './types.js';
 // ============================================================================
 
 /**
- * Detects if this is a re-call turn by checking for ToolResultMessage objects.
+ * Detects if this is a re-call turn by checking the last message only.
  * 
  * A re-call occurs when pi sends back tool results after a toolUse stop reason.
- * We detect this by scanning context.messages for any message with role === 'toolResult'.
+ * GSD accumulates prior-turn history, so scanning the full message list can match
+ * stale tool results from earlier turns and misclassify a fresh user prompt as a
+ * re-call. We only treat the turn as a re-call when the latest message is a
+ * ToolResultMessage.
  * 
  * @param messages - pi Context.messages array
- * @returns True if any ToolResultMessage is present (re-call detected)
+ * @returns True if the last message is a ToolResultMessage
  */
 export function detectReCall(messages: unknown[]): boolean {
-  if (!Array.isArray(messages)) return false;
-  
-  return messages.some((msg): msg is PiToolResultMessage => {
-    if (typeof msg !== 'object' || msg === null) return false;
-    if (!('role' in msg)) return false;
-    return (msg as PiToolResultMessage).role === 'toolResult';
-  });
+  if (!Array.isArray(messages) || messages.length === 0) return false;
+
+  const lastMessage = messages[messages.length - 1];
+  if (typeof lastMessage !== 'object' || lastMessage === null) return false;
+  if (!('role' in lastMessage)) return false;
+
+  return (lastMessage as PiToolResultMessage).role === 'toolResult';
 }
 
 /**

@@ -504,6 +504,78 @@ describe('streamSimple', () => {
     });
   });
 
+  it('treats stale historical toolResult messages as a fresh prompt', async () => {
+    const mockTaskId = 'task_fresh_after_history';
+    const mockContextId = 'ctx_fresh_after_history';
+
+    mockCreateTask.mockReturnValue({
+      taskId: mockTaskId,
+      contextId: mockContextId,
+      state: 'submitted',
+      awaitingApproval: false,
+      pendingToolCalls: [],
+      isTerminal: false,
+    });
+
+    mockSendMessageStream.mockResolvedValue({
+      taskId: mockTaskId,
+      contextId: mockContextId,
+      sseStream: new ReadableStream(),
+      metadata: { url: 'http://localhost:41242/', requestId: 'req_fresh_after_history' },
+    });
+
+    mockParseSSEStream.mockImplementation(async function* () {
+      yield createTextEvent('Fresh turn response');
+      yield createStateChangeEvent('completed', false, true);
+    });
+
+    mockGetTaskState.mockReturnValue({
+      taskId: mockTaskId,
+      contextId: mockContextId,
+      state: 'completed',
+      awaitingApproval: false,
+      pendingToolCalls: [],
+      isTerminal: true,
+    });
+
+    const { stream, result } = streamSimple({
+      prompt: 'Second prompt',
+      context: {
+        messages: [
+          { role: 'user', content: [{ type: 'text', text: 'First prompt' }] },
+          { role: 'assistant', content: [] },
+          {
+            role: 'toolResult',
+            toolCallId: 'call_old',
+            toolName: 'mcp_tools_read',
+            isError: false,
+            content: [{ type: 'text', text: 'Old result' }],
+          },
+          { role: 'assistant', content: [] },
+          { role: 'user', content: [{ type: 'text', text: 'Second prompt' }] },
+        ],
+      } as any,
+    });
+
+    const events = await collectEvents(stream);
+    const finalResult = await result;
+
+    expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
+    expect(mockSendMessageStream).toHaveBeenCalledWith({
+      prompt: 'Second prompt',
+      taskId: mockTaskId,
+      contextId: mockContextId,
+      model: undefined,
+      signal: undefined,
+    });
+    expect(mockInjectResult).not.toHaveBeenCalled();
+    expect(finalResult.taskId).toBe(mockTaskId);
+    expect(events.at(-1)).toMatchObject({
+      type: 'done',
+      reason: 'stop',
+    });
+  });
+
   it('surfaces transport failures as error terminal events', async () => {
     mockCreateTask.mockReturnValue({
       taskId: 'task_transport',

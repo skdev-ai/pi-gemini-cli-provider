@@ -321,15 +321,15 @@ export async function approveToolCall(
   params: ApproveToolCallParams
 ): Promise<ApproveToolCallResult> {
   const { taskId, callId, outcome, signal } = params;
-  
+
   const url = `http://localhost:${DEFAULT_A2A_PORT}/`;
-  const requestId = generateRequestId();
+  const approvalMessageId = generateRequestId();
 
   // Construct JSON-RPC request body for approve
-  // Note: Uses message/stream method with approval outcome in message parts
-  // This follows the A2A pattern for sending approval responses
+  // `params.taskId` must be the server's internal task UUID (from SSE events).
+  // The InMemoryTaskStore is keyed by this UUID.
   const requestBody = {
-    id: requestId,
+    id: approvalMessageId,
     jsonrpc: '2.0' as const,
     method: 'message/stream',
     params: {
@@ -345,7 +345,10 @@ export async function approveToolCall(
             },
           },
         ],
-        messageId: requestId,
+        messageId: approvalMessageId,
+        // taskId/contextId in message body are required — DefaultRequestHandler
+        // uses incomingMessage.taskId (not params.taskId) to look up the task
+        taskId,
       },
     },
   };
@@ -378,7 +381,7 @@ export async function approveToolCall(
       sseStream: response.body,
       metadata: {
         url,
-        requestId,
+        requestId: approvalMessageId,
       },
     };
   } catch (error) {

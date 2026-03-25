@@ -424,7 +424,8 @@ describe('streamSimple', () => {
     const finalResult = await result;
 
     expect(mockApproveToolCall).toHaveBeenCalledWith({
-      taskId: mockTaskId,
+      // Uses server's task UUID (falls back to a2aTaskId when serverTaskId not in mock events)
+      taskId: 'task_native',
       callId: 'call_1',
       outcome: 'proceed_once',
       signal: undefined,

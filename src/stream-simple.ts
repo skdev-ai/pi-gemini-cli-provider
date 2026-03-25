@@ -429,7 +429,7 @@ async function handleFreshPrompt(
 
   const taskState = taskId && contextId ? createTaskWithIds(taskId, contextId) : createTask();
 
-  const { taskId: a2aTaskId, contextId: a2aContextId, sseStream } = await sendMessageStream({
+  const { taskId: a2aTaskId, contextId: a2aContextId, sseStream, metadata: a2aMetadata } = await sendMessageStream({
     prompt,
     taskId: taskState.taskId,
     contextId: taskState.contextId,
@@ -440,8 +440,15 @@ async function handleFreshPrompt(
   const partialMessage = createPartialMessage();
   const eventState = createStreamEventState();
   let stopReason: string | undefined;
+  // Track server-assigned task ID (differs from our local a2aTaskId)
+  let serverTaskId: string | undefined;
+  let serverContextId: string | undefined;
 
   for await (const event of parseSSEStream(sseStream, { signal })) {
+    // Capture server's real task/context IDs from first event
+    if (!serverTaskId && event.serverTaskId) serverTaskId = event.serverTaskId;
+    if (!serverContextId && event.serverContextId) serverContextId = event.serverContextId;
+
     updateTaskState(a2aTaskId, event);
     const nextPartial = updatePartialMessage(partialMessage, event);
     copyPartialMessage(partialMessage, nextPartial);
@@ -464,14 +471,20 @@ async function handleFreshPrompt(
         if (hasNativeCalls && !hasMcpCalls) {
           for (const toolCall of pendingToolCalls) {
             try {
+              const fs = await import('node:fs');
+              fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] APPROVE: a2aMetadata.requestId=${a2aMetadata.requestId} serverTaskId=${serverTaskId} a2aTaskId=${a2aTaskId}\n`);
               const { sseStream: approveStream } = await approveToolCall({
-                taskId: a2aTaskId,
+                // Use server's real task UUID — the InMemoryTaskStore is keyed by this
+                taskId: serverTaskId ?? a2aTaskId,
                 callId: toolCall.callId,
                 outcome: 'proceed_once',
                 signal,
               });
 
+              let approveEventCount = 0;
               for await (const approveEvent of parseSSEStream(approveStream, { signal })) {
+                approveEventCount++;
+                console.error(`[gemini-a2a] approve-event #${approveEventCount}: kind=${approveEvent.kind} state=${approveEvent.result?.status?.state} final=${approveEvent.result?.final} text=${(approveEvent.text ?? '').slice(0, 80)}`);
                 updateTaskState(a2aTaskId, approveEvent);
                 const approvePartial = updatePartialMessage(partialMessage, approveEvent);
                 copyPartialMessage(partialMessage, approvePartial);
@@ -479,9 +492,11 @@ async function handleFreshPrompt(
 
                 const approvedState = getTaskState(a2aTaskId);
                 if (approvedState?.isTerminal) {
+                  console.error(`[gemini-a2a] approve-loop: terminal state reached after ${approveEventCount} events`);
                   break;
                 }
               }
+              console.error(`[gemini-a2a] approve-loop: exited after ${approveEventCount} events, partialText=${partialMessage.text.length} chars`);
             } catch (error) {
               const errorMessage = error instanceof Error ? error.message : 'Auto-approval failed';
               markTaskFailed(a2aTaskId, errorMessage);
@@ -516,8 +531,9 @@ async function handleFreshPrompt(
   finalizeOpenContent(stream, eventState, finalMessage, createMessageMetadata(model));
 
   return {
-    taskId: a2aTaskId,
-    contextId: a2aContextId,
+    // Use server-assigned IDs for multi-turn continuity
+    taskId: serverTaskId ?? a2aTaskId,
+    contextId: serverContextId ?? a2aContextId,
     stopReason,
     message: finalMessage,
   };

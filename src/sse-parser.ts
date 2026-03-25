@@ -52,12 +52,18 @@ export async function* parseSSEStream(
       if (!event.data) return;
       
       try {
-        const parsed = JSON.parse(event.data) as { result?: A2AResult };
+        const parsed = JSON.parse(event.data) as Record<string, any>;
         const result = parsed.result;
         if (!result) return;
-        
+
+        // Extract server task/context IDs from wherever they appear
+        const sTaskId = result.taskId ?? result.id;
+        const sContextId = result.contextId;
+
         const parsedEvent = parseA2AResult(result);
         if (parsedEvent) {
+          if (sTaskId) parsedEvent.serverTaskId = sTaskId;
+          if (sContextId) parsedEvent.serverContextId = sContextId;
           eventQueue.push(parsedEvent);
           notify();
         }

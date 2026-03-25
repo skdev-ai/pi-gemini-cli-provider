@@ -302,6 +302,10 @@ export interface ParsedA2AEvent {
   toolCall?: ToolCallMetadata;
   /** True when task is complete with input-required + final flag */
   isAwaitingApproval?: boolean;
+  /** Server-assigned task ID from the SSE envelope (not our local ID) */
+  serverTaskId?: string;
+  /** Server-assigned context ID from the SSE envelope */
+  serverContextId?: string;
 }
 
 /**

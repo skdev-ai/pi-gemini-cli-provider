@@ -827,12 +827,12 @@ function partialMessageToContent(partialMessage: {
 }): AssistantMessageContent[] {
   const content: AssistantMessageContent[] = [];
 
-  if (partialMessage.text.length > 0) {
-    content.push({ type: 'text', text: partialMessage.text });
-  }
-
   if (partialMessage.thinking.length > 0) {
     content.push({ type: 'thinking', thinking: partialMessage.thinking });
+  }
+
+  if (partialMessage.text.length > 0) {
+    content.push({ type: 'text', text: partialMessage.text });
   }
 
   for (const toolCall of partialMessage.toolCalls) {

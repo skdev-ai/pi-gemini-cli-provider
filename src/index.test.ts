@@ -13,9 +13,30 @@ import { Type } from '@sinclair/typebox';
 import { join } from 'path';
 import { homedir } from 'os';
 
+async function loadExtensionFresh() {
+  vi.resetModules();
+  const extensionModule = await import('./index.js');
+  return extensionModule.default;
+}
+
+async function loadExtensionWithToolSchemaWriterMock(
+  implementation: (pi: { getAllTools(): any[] }) => { path: string; isStale: boolean; toolCount: number }
+) {
+  vi.resetModules();
+  const writeToolSchemasMock = vi.fn(implementation);
+  vi.doMock('./tool-schema-writer.js', () => ({
+    writeToolSchemas: writeToolSchemasMock,
+  }));
+  const extensionModule = await import('./index.js');
+  return {
+    extension: extensionModule.default,
+    writeToolSchemasMock,
+  };
+}
+
 // Use unique schema path per test file to avoid race conditions
 const schemaDir = join(homedir(), '.pi', 'agent', 'extensions', 'pi-gemini-cli-provider');
-const schemaFileName = `test-index-${process.pid}.json`;
+const schemaFileName = `test-index-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
 const schemaFilePath = join(schemaDir, schemaFileName);
 
 // Mock pi object with getAllTools
@@ -83,10 +104,7 @@ const sampleTools = [
 ];
 
 describe('extension load behavior', () => {
-  beforeEach(async () => {
-    // Reset modules to ensure clean state and fresh env var reading
-    vi.resetModules();
-    
+  beforeEach(() => {
     // Set unique schema path for this test file to avoid race conditions
     process.env.PI_GEMINI_SCHEMA_PATH = schemaFilePath;
     
@@ -112,8 +130,7 @@ describe('extension load behavior', () => {
   });
 
   it('registers provider on extension load', async () => {
-    const extensionModule = await import('./index.js');
-    const extension = extensionModule.default;
+    const extension = await loadExtensionFresh();
     
     const mockPi: any = createMockPi(sampleTools);
     
@@ -132,8 +149,7 @@ describe('extension load behavior', () => {
   });
 
   it('registers /gemini-cli command on extension load', async () => {
-    const extensionModule = await import('./index.js');
-    const extension = extensionModule.default;
+    const extension = await loadExtensionFresh();
     
     const mockPi: any = createMockPi(sampleTools);
     
@@ -150,8 +166,7 @@ describe('extension load behavior', () => {
   });
 
   it('prepares provider workspace on extension load', async () => {
-    const extensionModule = await import('./index.js');
-    const extension = extensionModule.default;
+    const extension = await loadExtensionFresh();
     
     const mockPi: any = createMockPi(sampleTools);
     
@@ -169,8 +184,7 @@ describe('extension load behavior', () => {
   });
 
   it('does not block extension load if provider registration fails', async () => {
-    const extensionModule = await import('./index.js');
-    const extension = extensionModule.default;
+    const extension = await loadExtensionFresh();
     
     const mockPi: any = createMockPi(sampleTools);
     mockPi.registerProvider = () => {
@@ -185,8 +199,7 @@ describe('extension load behavior', () => {
   });
 
   it('does not block extension load if workspace generation fails', async () => {
-    const extensionModule = await import('./index.js');
-    const extension = extensionModule.default;
+    const extension = await loadExtensionFresh();
     
     const mockPi: any = createMockPi(sampleTools);
     
@@ -200,8 +213,7 @@ describe('extension load behavior', () => {
   });
 
   it('does NOT write schema file on extension load (only on session_start)', async () => {
-    const extensionModule = await import('./index.js');
-    const extension = extensionModule.default;
+    const extension = await loadExtensionFresh();
     
     const mockPi: any = createMockPi(sampleTools);
     
@@ -212,8 +224,7 @@ describe('extension load behavior', () => {
   });
 
   it('registers session_start handler but does not trigger it on load', async () => {
-    const extensionModule = await import('./index.js');
-    const extension = extensionModule.default;
+    const extension = await loadExtensionFresh();
     
     const mockPi: any = createMockPi(sampleTools);
     
@@ -233,8 +244,6 @@ describe('extension load behavior', () => {
 
 describe('session_start handler integration', () => {
   beforeEach(() => {
-    vi.resetModules();
-
     // Set unique schema path for this test file to avoid race conditions
     process.env.PI_GEMINI_SCHEMA_PATH = schemaFilePath;
     
@@ -259,10 +268,12 @@ describe('session_start handler integration', () => {
     delete process.env.PI_GEMINI_SCHEMA_PATH;
   });
 
-  it('writes schema file when session_start is triggered', async () => {
-    // Import the module to register the handler
-    const extensionModule = await import('./index.js');
-    const extension = extensionModule.default;
+  it('calls writeToolSchemas when session_start is triggered', async () => {
+    const { extension, writeToolSchemasMock } = await loadExtensionWithToolSchemaWriterMock((pi) => ({
+      path: schemaFilePath,
+      isStale: true,
+      toolCount: pi.getAllTools().length,
+    }));
     
     // Create mock pi with tools
     const mockPi: any = createMockPi(sampleTools);
@@ -285,27 +296,23 @@ describe('session_start handler integration', () => {
     // Trigger session_start
     await registeredHandlers['session_start']('session_start', mockCtx);
     
-    // Verify schema file was created
-    expect(existsSync(schemaFilePath)).toBe(true);
-    
-    // Verify file contains valid JSON
-    const content = readFileSync(schemaFilePath, 'utf-8');
-    const schemas = JSON.parse(content);
-    expect(Array.isArray(schemas)).toBe(true);
-    
-    // Verify denylist filtering (should have 3 tools: read, write, bash)
-    expect(schemas.length).toBe(3);
-    const toolNames = schemas.map((s: any) => s.name);
-    expect(toolNames).toContain('read');
-    expect(toolNames).toContain('write');
-    expect(toolNames).toContain('bash');
-    expect(toolNames).not.toContain('gemini_cli_search');
-    expect(toolNames).not.toContain('google_search');
+    // Verify mocked writer was called with the current pi object
+    expect(writeToolSchemasMock).toHaveBeenCalledTimes(1);
+    expect(writeToolSchemasMock).toHaveBeenCalledWith(mockPi);
+    expect(mockCtx.notifications.length).toBe(1);
+    expect(mockCtx.notifications[0].message).toContain('Tool list updated');
   });
 
   it('notifies user only when tool list changes (isStale=true)', async () => {
-    const extensionModule = await import('./index.js');
-    const extension = extensionModule.default;
+    let callCount = 0;
+    const { extension } = await loadExtensionWithToolSchemaWriterMock(() => {
+      callCount += 1;
+      return {
+        path: schemaFilePath,
+        isStale: callCount === 1,
+        toolCount: 3,
+      };
+    });
     
     const mockPi: any = createMockPi(sampleTools);
     const registeredHandlers: Record<string, Function> = {};
@@ -330,52 +337,68 @@ describe('session_start handler integration', () => {
   });
 
   it('notifies user when tool list changes between sessions', async () => {
-    const extensionModule = await import('./index.js');
-    const extension = extensionModule.default;
+    const staleStates = [true, false, true];
     
     // First session with 3 tools
+    const { extension: extension1 } = await loadExtensionWithToolSchemaWriterMock(() => ({
+      path: schemaFilePath,
+      isStale: staleStates.shift() ?? false,
+      toolCount: 3,
+    }));
     const mockPi1: any = createMockPi(sampleTools.slice(0, 3));
     const registeredHandlers1: Record<string, Function> = {};
     mockPi1.on.mockImplementation((event: string, handler: Function) => {
       registeredHandlers1[event] = handler;
     });
     
-    await extension(mockPi1);
+    await extension1(mockPi1);
     const mockCtx1: any = createMockContext();
     await registeredHandlers1['session_start']('session_start', mockCtx1);
     
     // Verify first session wrote schemas
-    expect(existsSync(schemaFilePath)).toBe(true);
     expect(mockCtx1.notifications.length).toBe(1); // First write should notify
     
     // Second session with same tools - no notification
+    const { extension: extension2 } = await loadExtensionWithToolSchemaWriterMock(() => ({
+      path: schemaFilePath,
+      isStale: staleStates.shift() ?? false,
+      toolCount: 3,
+    }));
     const mockPi2: any = createMockPi(sampleTools.slice(0, 3));
     const registeredHandlers2: Record<string, Function> = {};
     mockPi2.on.mockImplementation((event: string, handler: Function) => {
       registeredHandlers2[event] = handler;
     });
-    await extension(mockPi2);
+    await extension2(mockPi2);
     
     const mockCtx2: any = createMockContext();
     await registeredHandlers2['session_start']('session_start', mockCtx2);
     expect(mockCtx2.notifications.length).toBe(0); // Same tools, no notification
     
     // Third session with different tools - should notify
+    const { extension: extension3 } = await loadExtensionWithToolSchemaWriterMock(() => ({
+      path: schemaFilePath,
+      isStale: staleStates.shift() ?? false,
+      toolCount: 2,
+    }));
     const mockPi3: any = createMockPi(sampleTools.slice(0, 2)); // Only 2 tools now
     const registeredHandlers3: Record<string, Function> = {};
     mockPi3.on.mockImplementation((event: string, handler: Function) => {
       registeredHandlers3[event] = handler;
     });
-    await extension(mockPi3);
+    await extension3(mockPi3);
     
     const mockCtx3: any = createMockContext();
     await registeredHandlers3['session_start']('session_start', mockCtx3);
     expect(mockCtx3.notifications.length).toBe(1); // Different tools, should notify
   });
 
-  it('excludes all denylist tools from schema file', async () => {
-    const extensionModule = await import('./index.js');
-    const extension = extensionModule.default;
+  it('passes the current tool list into writeToolSchemas on session_start', async () => {
+    const { extension, writeToolSchemasMock } = await loadExtensionWithToolSchemaWriterMock((pi) => ({
+      path: schemaFilePath,
+      isStale: true,
+      toolCount: pi.getAllTools().length,
+    }));
     
     const mockPi: any = createMockPi(sampleTools);
     const registeredHandlers: Record<string, Function> = {};
@@ -387,17 +410,9 @@ describe('session_start handler integration', () => {
     const mockCtx: any = createMockContext();
     await registeredHandlers['session_start']('session_start', mockCtx);
     
-    // Read and verify schema file
-    const content = readFileSync(schemaFilePath, 'utf-8');
-    const schemas = JSON.parse(content);
-    
-    // Verify no denylist tools present
-    const toolNames = schemas.map((s: any) => s.name);
-    expect(toolNames).not.toContain('gemini_cli_search');
-    expect(toolNames).not.toContain('google_search');
-    expect(toolNames).not.toContain('search_the_web');
-    expect(toolNames).not.toContain('search-the-web');
-    expect(toolNames).not.toContain('search_and_read');
-    expect(toolNames).not.toContain('fetch_page');
+    expect(writeToolSchemasMock).toHaveBeenCalledTimes(1);
+    expect(writeToolSchemasMock).toHaveBeenCalledWith(mockPi);
+    const [piArg] = writeToolSchemasMock.mock.calls[0] ?? [];
+    expect(piArg.getAllTools().map((tool: any) => tool.name)).toEqual(sampleTools.map((tool) => tool.name));
   });
 });

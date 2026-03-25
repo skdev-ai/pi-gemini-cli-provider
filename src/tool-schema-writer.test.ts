@@ -118,7 +118,7 @@ const mockTools = [
 
 describe('tool-schema-writer', () => {
   const schemaDir = join(homedir(), '.pi', 'agent', 'extensions', 'pi-gemini-cli-provider');
-  const schemaFileName = `test-tool-schemas-writer-${process.pid}.json`;
+  const schemaFileName = `test-tool-schemas-writer-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
   const schemaFilePath = join(schemaDir, schemaFileName);
 
   beforeEach(async () => {

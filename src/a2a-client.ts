@@ -262,6 +262,9 @@ export async function injectResult(
           },
         ],
         messageId: requestId,
+        // taskId in message body required — DefaultRequestHandler uses
+        // incomingMessage.taskId to look up the existing task
+        taskId,
       },
     },
   };

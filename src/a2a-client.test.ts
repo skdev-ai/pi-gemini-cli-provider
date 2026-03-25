@@ -310,6 +310,7 @@ describe('injectResult', () => {
             },
           ],
           messageId: expect.stringMatching(/^req_/),
+          taskId: 'task_123',
         },
       },
     });

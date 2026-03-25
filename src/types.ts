@@ -66,7 +66,11 @@ export interface SearchError {
     /** Detected when ACP warm subprocess fails to boot within timeout - S01 */
     | 'ACP_BOOT_FAILED'
     /** Detected when server respawn after health check failure fails - Bugfix 260320-1 */
-    | 'A2A_RESPAWN_FAILED';
+    | 'A2A_RESPAWN_FAILED'
+    /** Detected when inject_result patch is missing from A2A bundle - S02 */
+    | 'A2A_INJECT_RESULT_NOT_PATCHED'
+    /** Detected when pending tools are cancelled on abort instead of preserved during input-required state - Bugfix 260324-10 */
+    | 'A2A_PENDING_TOOL_ABORT_NOT_PATCHED';
   /** Human-readable error message */
   message: string;
 }
@@ -119,8 +123,10 @@ export interface A2AServerState {
   port: number;
   /** Uptime in milliseconds since server started, null if not running */
   uptime: number | null;
-  /** Total number of searches processed since session start */
+  /** Total number of searches processed since session start (search extension traffic) */
   searchCount: number;
+  /** Total number of provider tasks processed since session start (provider extension traffic) */
+  providerTaskCount: number;
   /** Most recent error encountered, null if no errors */
   lastError: SearchError | null;
   /** Exit code from child process, null if still running or not started */
@@ -151,7 +157,7 @@ export interface A2AResult {
   /** Optional metadata about the coder agent and event type */
   metadata?: {
     coderAgent: {
-      kind: 'text-content' | 'tool-call-update' | 'tool-call-confirmation' | 'thought';
+      kind: 'text-content' | 'tool-call-update' | 'tool-call-confirmation' | 'thought' | 'state-change';
     };
   };
   /** Current task status with state and message parts */
@@ -272,3 +278,287 @@ export interface A2AArtifact {
  * gemini-3-flash-preview selected for fastest response time (7.7s avg) and cleanest direct URL output.
  */
 export const SEARCH_MODEL = 'gemini-3-flash-preview';
+
+// ============================================================================
+// A2A Transport Types (S03)
+// ============================================================================
+
+/**
+ * Parsed A2A SSE event with typed discriminator.
+ * Emitted by the SSE parser for each state-change/tool-call/text event.
+ */
+export interface ParsedA2AEvent {
+  /** Event kind discriminator from result.metadata.coderAgent.kind */
+  kind: 'state-change' | 'thought' | 'tool-call-update' | 'tool-call-confirmation' | 'text-content';
+  /** Full A2A result object */
+  result: A2AResult;
+  /** Extracted text content (for text-content events) */
+  text?: string;
+  /** Extracted tool call metadata (for tool-call-update events) */
+  toolCall?: ToolCallMetadata;
+  /** True when task is complete with input-required + final flag */
+  isAwaitingApproval?: boolean;
+}
+
+/**
+ * Tool call metadata extracted from a tool-call-update event.
+ */
+export interface ToolCallMetadata {
+  /** Unique call identifier for result injection */
+  callId: string;
+  /** Fully qualified tool name (e.g., mcp_server_tool) */
+  name: string;
+  /** Tool arguments as passed to the tool */
+  args: unknown;
+  /** Current execution status */
+  status: 'validating' | 'scheduled' | 'executing' | 'success';
+}
+
+/**
+ * Task state tracked by the task manager.
+ * Persists across multi-turn conversations and tool approval flows.
+ */
+export interface TaskState {
+  /** Unique task identifier */
+  taskId: string;
+  /** Context ID for multi-turn conversation continuity */
+  contextId: string;
+  /** Current lifecycle state from A2A spec */
+  state: 'submitted' | 'working' | 'input-required' | 'completed' | 'failed' | 'canceled' | 'rejected';
+  /** True when task is awaiting user approval (input-required + final) */
+  awaitingApproval: boolean;
+  /** Tool calls pending approval/execution */
+  pendingToolCalls: ToolCallMetadata[];
+  /** True when task has reached a terminal state */
+  isTerminal: boolean;
+  /** Last error message if state is failed/canceled/rejected */
+  errorMessage?: string;
+}
+
+/**
+ * A2A request parameters for message/stream method.
+ */
+export interface A2AStreamRequest {
+  /** JSON-RPC request ID */
+  id: string;
+  /** JSON-RPC version */
+  jsonrpc: '2.0';
+  /** Always "message/stream" for A2A prompt submission */
+  method: 'message/stream';
+  /** Request parameters */
+  params: {
+    /** User message to send */
+    message: {
+      /** Always "user" for user messages */
+      role: 'user';
+      /** Message parts (text content) */
+      parts: Array<{ kind: 'text'; text: string }>;
+      /** Optional message ID for tracking */
+      messageId?: string;
+      /** Optional metadata for per-request model override */
+      metadata?: {
+        /** Model name override (Patch 2 from search extension) */
+        _model?: string;
+      };
+    };
+    /** Optional task ID for multi-turn (reuse existing task) */
+    taskId?: string;
+    /** Optional context ID for conversation continuity */
+    contextId?: string;
+  };
+}
+
+/**
+ * A2A inject_result request parameters.
+ */
+export interface A2AInjectResultRequest {
+  /** JSON-RPC request ID */
+  id: string;
+  /** JSON-RPC version */
+  jsonrpc: '2.0';
+  /** Always "tasks/inject_result" for tool result injection */
+  method: 'tasks/inject_result';
+  /** Request parameters */
+  params: {
+    /** Task ID to inject result into */
+    taskId: string;
+    /** Tool call ID this result is for */
+    callId: string;
+    /** Function response object */
+    functionResponse: {
+      /** Response name (usually matches tool name) */
+      name: string;
+      /** Response content (structured data) */
+      response: unknown;
+    };
+  };
+}
+
+/**
+ * A2A transport error with categorized failure mode.
+ */
+export interface A2ATransportError {
+  /** Error category for programmatic handling */
+  type:
+    | 'CONNECTION_REFUSED'
+    | 'CONNECTION_TIMEOUT'
+    | 'RESPONSE_TIMEOUT'
+    | 'PARSE_ERROR'
+    | 'HTTP_ERROR'
+    | 'ABORTED';
+  /** Human-readable error message */
+  message: string;
+  /** Optional underlying error for debugging */
+  cause?: unknown;
+}
+
+// ============================================================================
+// S04 Approval Flow Types
+// ============================================================================
+
+/**
+ * Native tool allowlist for auto-approval.
+ * These tools bypass MCP routing and are auto-approved.
+ */
+export const NATIVE_TOOL_ALLOWLIST = ['google_web_search', 'web_fetch'] as const;
+
+/**
+ * Native tool name type (for type-safe routing).
+ */
+export type NativeToolName = (typeof NATIVE_TOOL_ALLOWLIST)[number];
+
+/**
+ * Tool routing decision for a pending tool call.
+ * Classifies whether a tool call should be routed to MCP or auto-approved as native.
+ */
+export interface ToolRoutingDecision {
+  /** Original tool call metadata */
+  toolCall: ToolCallMetadata;
+  /** Routing classification */
+  routing: 'mcp' | 'native';
+  /** User-facing tool name (prefix-stripped for MCP tools) */
+  displayName: string;
+  /** Whether this tool is auto-approved (native) or requires approval (MCP) */
+  autoApprove: boolean;
+  /** Reason for routing decision */
+  reason: string;
+}
+
+/**
+ * Reinjection work item for a completed tool call.
+ * Represents one inject_result() call to be made.
+ */
+export interface ReinjectionWorkItem {
+  /** Tool call ID for this result */
+  callId: string;
+  /** Tool name (user-facing, prefix-stripped) */
+  toolName: string;
+  /** Tool arguments */
+  args: unknown;
+  /** Tool result payload for injection */
+  result: ToolResultPayload;
+  /** Whether this was auto-approved (native) or required approval (MCP) */
+  routing: 'mcp' | 'native';
+}
+
+/**
+ * Tool result payload normalized for inject_result().
+ * Compatible with pi's ToolResultMessage.response shape.
+ */
+export interface ToolResultPayload {
+  /** Response name (matches tool name) */
+  name: string;
+  /** Response content (structured data) */
+  response: unknown;
+}
+
+// ============================================================================
+// S04 Result Extractor Types
+// ============================================================================
+
+/**
+ * Normalized tool result extracted from pi's ToolResultMessage.
+ * Ready for injection via inject_result().
+ */
+export interface ExtractedToolResult {
+  /** Tool call ID this result corresponds to */
+  toolCallId: string;
+  /** Tool name */
+  toolName: string;
+  /** Whether the tool execution failed */
+  isError: boolean;
+  /** Result payload for injection */
+  payload: ToolResultPayload;
+}
+
+/**
+ * pi ToolResultMessage shape (from pi's Context.messages).
+ * Used for re-call detection and result extraction.
+ */
+export interface PiToolResultMessage {
+  /** Always 'toolResult' for tool result messages */
+  role: 'toolResult';
+  /** Tool call ID this result is for */
+  toolCallId: string;
+  /** Tool name */
+  toolName: string;
+  /** Whether the tool execution failed */
+  isError?: boolean;
+  /** Result content */
+  content: Array<
+    | {
+        /** Content type */
+        type: 'text';
+        /** Text content */
+        text?: string;
+      }
+    | {
+        /** Content type */
+        type: 'image';
+        /** Base64 image data */
+        data?: string;
+        /** Image MIME type */
+        mimeType?: string;
+      }
+  >;
+}
+
+// ============================================================================
+// S04 Event Bridge Types
+// ============================================================================
+
+/**
+ * pi AssistantMessageEvent shape for stream emission.
+ * Compatible with pi's AssistantMessageEventStream contract.
+ */
+export interface PiAssistantMessageEvent {
+  /** Event type discriminator */
+  type: 'text' | 'thinking' | 'toolCall';
+  /** Event content (varies by type) */
+  content: string | PiToolCallContent;
+}
+
+/**
+ * pi tool call content for AssistantMessageEvent.
+ */
+export interface PiToolCallContent {
+  /** Tool call ID */
+  id: string;
+  /** Tool name (user-facing) */
+  name: string;
+  /** Tool arguments */
+  arguments: Record<string, any>;
+}
+
+/**
+ * Partial assistant message accumulator.
+ * Builds up the complete assistant message from A2A stream events.
+ */
+export interface PartialAssistantMessage {
+  /** Accumulated text content */
+  text: string;
+  /** Accumulated thinking content */
+  thinking: string;
+  /** Tool calls emitted so far */
+  toolCalls: PiToolCallContent[];
+}

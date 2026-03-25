@@ -117,8 +117,11 @@ export function updateTaskState(taskId: string, event: ParsedA2AEvent): TaskStat
   }
   
   // Update awaiting approval from input-required + final pattern
+  // Only set awaitingApproval when there are actual pending tool calls.
+  // input-required + final is ALSO the normal completion state (no tools),
+  // so we must check pendingToolCalls to distinguish.
   if (state.state === 'input-required' && event.result.final === true) {
-    state.awaitingApproval = true;
+    state.awaitingApproval = state.pendingToolCalls.length > 0;
   }
   
   taskStore.set(taskId, state);

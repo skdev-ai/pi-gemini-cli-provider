@@ -157,10 +157,13 @@ describe('updateTaskState - state transitions', () => {
 
   it('should transition to input-required and detect awaiting approval', () => {
     const task = createTask();
-    
+
     // First transition to working
     updateTaskState(task.taskId, createParsedEvent('state-change', 'working'));
-    
+
+    // Add a pending tool call so awaitingApproval can be true
+    updateTaskState(task.taskId, createToolCallEvent('call_1', 'mcp_tools_read', 'validating'));
+
     // Then to input-required with final=true
     const event = createParsedEvent(
       'state-change',
@@ -169,10 +172,26 @@ describe('updateTaskState - state transitions', () => {
       true  // isAwaitingApproval
     );
     const updated = updateTaskState(task.taskId, event);
-    
+
     expect(updated?.state).toBe('input-required');
     expect(updated?.awaitingApproval).toBe(true);
     expect(updated?.isTerminal).toBe(false);
+  });
+
+  it('should NOT set awaiting approval when input-required + final but no pending tools', () => {
+    const task = createTask();
+
+    // No pending tool calls — this is normal completion
+    const event = createParsedEvent(
+      'state-change',
+      'input-required',
+      true, // final
+      false
+    );
+    const updated = updateTaskState(task.taskId, event);
+
+    expect(updated?.state).toBe('input-required');
+    expect(updated?.awaitingApproval).toBe(false);
   });
 
   it('should transition to completed and mark as terminal', () => {
@@ -199,6 +218,9 @@ describe('updateTaskState - state transitions', () => {
     updateTaskState(task.taskId, createParsedEvent('state-change', 'working'));
     expect(getTaskStateString(task.taskId)).toBe('working');
     
+    // Add pending tool call so approval state is valid
+    updateTaskState(task.taskId, createToolCallEvent('call_1', 'mcp_tools_read', 'validating'));
+
     // working -> input-required (awaiting approval)
     updateTaskState(
       task.taskId,
@@ -369,14 +391,26 @@ describe('isAwaitingApproval', () => {
     clearAllTasks();
   });
 
-  it('should return true when task is awaiting approval', () => {
+  it('should return true when task is awaiting approval with pending tool calls', () => {
+    const task = createTask();
+    // Add pending tool call first — awaitingApproval requires pending calls
+    updateTaskState(task.taskId, createToolCallEvent('call_1', 'mcp_tools_read', 'validating'));
+    updateTaskState(
+      task.taskId,
+      createParsedEvent('state-change', 'input-required', true, true)
+    );
+
+    expect(isAwaitingApproval(task.taskId)).toBe(true);
+  });
+
+  it('should return false when input-required + final but no pending tool calls', () => {
     const task = createTask();
     updateTaskState(
       task.taskId,
       createParsedEvent('state-change', 'input-required', true, true)
     );
-    
-    expect(isAwaitingApproval(task.taskId)).toBe(true);
+
+    expect(isAwaitingApproval(task.taskId)).toBe(false);
   });
 
   it('should return false when task is not awaiting approval', () => {
@@ -540,8 +574,11 @@ describe('failure and edge cases', () => {
     expect(state?.awaitingApproval).toBe(false);
   });
 
-  it('should detect awaiting approval from input-required + final pattern', () => {
+  it('should detect awaiting approval from input-required + final pattern when pending tools exist', () => {
     const task = createTask();
+    // Add pending tool call first
+    updateTaskState(task.taskId, createToolCallEvent('call_1', 'mcp_tools_read', 'validating'));
+
     // Event without isAwaitingApproval flag but with input-required + final
     const event: ParsedA2AEvent = {
       kind: 'state-change',
@@ -550,12 +587,30 @@ describe('failure and edge cases', () => {
         status: { state: 'input-required', message: { parts: [] } },
         final: true,
       },
-      isAwaitingApproval: false, // Explicitly false
+      isAwaitingApproval: false, // Explicitly false from SSE parser
     };
     updateTaskState(task.taskId, event);
-    
+
     const state = getTaskState(task.taskId);
-    // Should be true because of input-required + final pattern
+    // Should be true because pending tool calls exist
     expect(state?.awaitingApproval).toBe(true);
+  });
+
+  it('should NOT set awaiting approval from input-required + final when no pending tools', () => {
+    const task = createTask();
+    // No pending tool calls — normal completion
+    const event: ParsedA2AEvent = {
+      kind: 'state-change',
+      result: {
+        metadata: { coderAgent: { kind: 'state-change' } },
+        status: { state: 'input-required', message: { parts: [] } },
+        final: true,
+      },
+      isAwaitingApproval: false,
+    };
+    updateTaskState(task.taskId, event);
+
+    const state = getTaskState(task.taskId);
+    expect(state?.awaitingApproval).toBe(false);
   });
 });

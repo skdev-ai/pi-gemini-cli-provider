@@ -580,6 +580,11 @@ async function handleReCall(
     }
   }
 
+  // Clear injected calls BEFORE checking for new pending calls.
+  // Otherwise the just-injected calls still appear in pendingToolCalls
+  // and falsely trigger stopReason: 'toolUse'.
+  clearPendingToolCalls(taskId, injectedCallIds);
+
   const updatedState = getTaskState(taskId);
   if (updatedState?.awaitingApproval) {
     const morePendingCalls = getPendingToolCalls(taskId);
@@ -587,8 +592,6 @@ async function handleReCall(
       stopReason = 'toolUse';
     }
   }
-
-  clearPendingToolCalls(taskId, injectedCallIds);
 
   const finalMessage = {
     text: partialMessage.text,

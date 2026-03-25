@@ -43,12 +43,13 @@
     "@sinclair/typebox": "^0.34.41"
   },
   "dependencies": {
+    "axios": "^1.13.6",
     "eventsource-parser": "3.0.6"
   },
   "devDependencies": {
+    "@sinclair/typebox": "^0.34.48",
     "@types/node": "^22.0.0",
     "typescript": "^5.0.0",
-    "vitest": "^4.1.0",
-    "@sinclair/typebox": "^0.34.48"
+    "vitest": "^4.1.0"
   }
 }

@@ -24,6 +24,7 @@ import {
   classifyToolRouting,
   buildReinjectionWorkList,
   validateReinjectionCompleteness,
+  isNativeTool,
 } from './approval-flow.js';
 import {
   createPartialMessage,
@@ -498,10 +499,14 @@ async function handleFreshPrompt(
     }
   }
 
+  // Filter out native tool calls — they were auto-approved within A2A
+  // and should not appear in the GSD-facing message.
+  const mcpToolCalls = partialMessage.toolCalls.filter((call) => !isNativeTool(call.name));
+
   const finalMessage = {
     text: partialMessage.text,
     thinking: partialMessage.thinking,
-    toolCalls: partialMessage.toolCalls.map((call) => ({
+    toolCalls: mcpToolCalls.map((call) => ({
       callId: call.id,
       name: call.name,
       args: call.arguments,
@@ -643,7 +648,12 @@ function emitTranslatedEvents(
     } else if (piEvent.type === 'thinking') {
       emitThinkingDelta(stream, state, partialMessage, deltaToString(piEvent.content), metadata);
     } else if (piEvent.type === 'toolCall') {
-      emitToolCall(stream, state, partialMessage, piEvent.content as PiToolCallContent, metadata);
+      const tc = piEvent.content as PiToolCallContent;
+      // Don't emit native tool calls (google_web_search, web_fetch) to GSD —
+      // they are auto-approved and handled within A2A.
+      if (!isNativeTool(tc.name)) {
+        emitToolCall(stream, state, partialMessage, tc, metadata);
+      }
     }
   }
 }

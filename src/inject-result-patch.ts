@@ -19,9 +19,16 @@ export const INJECT_RESULT_CASE = `} else if (outcomeString === "inject_result")
     logger.warn('[Task] inject_result missing functionResponse for callId: ' + callId);
     return false;
   }
+
+  const isError = functionResponse.isError === true;
+  const responsePayload = functionResponse.response;
+  const resultDisplay = responsePayload?.output || JSON.stringify(responsePayload) || '';
+  const errorMessage = isError
+    ? (typeof responsePayload?.output === 'string' ? responsePayload.output : resultDisplay || 'Tool execution failed')
+    : undefined;
   
   const completedToolCall = {
-    status: 'success',
+    status: isError ? 'error' : 'success',
     request: {
       callId: callId,
       name: functionResponse.name,
@@ -37,14 +44,14 @@ export const INJECT_RESULT_CASE = `} else if (outcomeString === "inject_result")
           functionResponse: {
             id: functionResponse.id,
             name: functionResponse.name,
-            response: functionResponse.response,
+            response: responsePayload,
           },
         },
       ],
-      resultDisplay: functionResponse.response?.output || JSON.stringify(functionResponse.response) || '',
-      error: undefined,
-      errorType: undefined,
-      contentLength: JSON.stringify(functionResponse.response).length,
+      resultDisplay: resultDisplay,
+      error: errorMessage,
+      errorType: isError ? 'tool_execution_error' : undefined,
+      contentLength: JSON.stringify(responsePayload).length,
     },
   };
   

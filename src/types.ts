@@ -370,26 +370,49 @@ export interface A2AStreamRequest {
 
 /**
  * A2A inject_result request parameters.
+ *
+ * Although this represents tool result reinjection, the live A2A server
+ * expects it to be sent through `message/stream` as a data part with
+ * `outcome: 'inject_result'`, matching the approval flow transport shape.
  */
 export interface A2AInjectResultRequest {
   /** JSON-RPC request ID */
   id: string;
   /** JSON-RPC version */
   jsonrpc: '2.0';
-  /** Always "tasks/inject_result" for tool result injection */
-  method: 'tasks/inject_result';
+  /** Always "message/stream" for tool result injection */
+  method: 'message/stream';
   /** Request parameters */
   params: {
     /** Task ID to inject result into */
     taskId: string;
-    /** Tool call ID this result is for */
-    callId: string;
-    /** Function response object */
-    functionResponse: {
-      /** Response name (usually matches tool name) */
-      name: string;
-      /** Response content (structured data) */
-      response: unknown;
+    /** User message carrying tool confirmation data */
+    message: {
+      /** Always "user" for user messages */
+      role: 'user';
+      /** Message parts containing the inject_result payload */
+      parts: Array<{
+        /** Structured data part */
+        kind: 'data';
+        /** Inject result payload */
+        data: {
+          /** Tool call ID this result is for */
+          callId: string;
+          /** Outcome discriminator consumed by the A2A patch */
+          outcome: 'inject_result';
+          /** Function response object */
+          functionResponse: {
+            /** Response name (usually matches tool name) */
+            name: string;
+            /** Response content (structured data) */
+            response: unknown;
+            /** Whether the tool execution failed */
+            isError?: boolean;
+          };
+        };
+      }>;
+      /** Message ID for tracking */
+      messageId: string;
     };
   };
 }
@@ -451,7 +474,7 @@ export interface ToolRoutingDecision {
 export interface ReinjectionWorkItem {
   /** Tool call ID for this result */
   callId: string;
-  /** Tool name (user-facing, prefix-stripped) */
+  /** Tool name (full A2A protocol name, e.g. mcp_tools_read — used for inject_result, not the display name) */
   toolName: string;
   /** Tool arguments */
   args: unknown;
@@ -463,13 +486,16 @@ export interface ReinjectionWorkItem {
 
 /**
  * Tool result payload normalized for inject_result().
- * Compatible with pi's ToolResultMessage.response shape.
+ * Compatible with pi's ToolResultMessage response shape, with explicit
+ * error metadata preserved for the A2A inject_result patch.
  */
 export interface ToolResultPayload {
   /** Response name (matches tool name) */
   name: string;
   /** Response content (structured data) */
   response: unknown;
+  /** Whether the underlying tool execution failed */
+  isError?: boolean;
 }
 
 // ============================================================================

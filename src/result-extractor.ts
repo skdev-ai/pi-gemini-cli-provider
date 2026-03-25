@@ -37,18 +37,23 @@ export function detectReCall(messages: unknown[]): boolean {
 }
 
 /**
- * Extracts all ToolResultMessage objects from context.messages in order.
- * 
- * Preserves the order of tool results as they appear in the message history.
- * This is critical for multi-tool turns where results must be injected in sequence.
- * 
+ * Extracts ToolResultMessage objects from the current tool-use turn only.
+ *
+ * Searches backward for the most recent assistant message with
+ * `stopReason === 'toolUse'` and only returns `toolResult` messages that
+ * appear after that boundary. This avoids scanning stale historical tool
+ * results from prior completed turns.
+ *
  * @param messages - pi Context.messages array
- * @returns Array of ToolResultMessage objects in order
+ * @returns Array of ToolResultMessage objects in order for the current turn
  */
 export function extractToolResultMessages(messages: unknown[]): PiToolResultMessage[] {
   if (!Array.isArray(messages)) return [];
+
+  const startIndex = findCurrentTurnToolResultStart(messages);
+  const currentTurnMessages = messages.slice(startIndex);
   
-  return messages.filter((msg): msg is PiToolResultMessage => {
+  return currentTurnMessages.filter((msg): msg is PiToolResultMessage => {
     if (typeof msg !== 'object' || msg === null) return false;
     if (!('role' in msg)) return false;
     return (msg as PiToolResultMessage).role === 'toolResult';
@@ -76,7 +81,7 @@ export function normalizeToolResult(message: PiToolResultMessage): ExtractedTool
   const { toolCallId, toolName, isError = false, content } = message;
   
   // Normalize content into response payload
-  const response = normalizeContent(content, isError);
+  const response = normalizeContent(content);
   
   return {
     toolCallId,
@@ -85,6 +90,7 @@ export function normalizeToolResult(message: PiToolResultMessage): ExtractedTool
     payload: {
       name: toolName,
       response,
+      ...(isError ? { isError: true } : {}),
     },
   };
 }
@@ -98,29 +104,24 @@ export function normalizeToolResult(message: PiToolResultMessage): ExtractedTool
  */
 function normalizeContent(
   content: PiToolResultMessage['content'],
-  isError: boolean,
 ): unknown {
   if (!content || content.length === 0) {
-    return isError ? { output: '', isError: true } : { output: '' };
+    return { output: '' };
   }
   
   // Single text part - return simple string
   if (content.length === 1 && content[0]?.type === 'text') {
-    const response: Record<string, unknown> = { output: content[0].text ?? '' };
-    if (isError) response.isError = true;
-    return response;
+    return { output: content[0].text ?? '' };
   }
   
   // Single image part - return image data
   if (content.length === 1 && content[0]?.type === 'image') {
-    const response: Record<string, unknown> = {
+    return {
       image: {
         data: content[0].data ?? null,
         mimeType: content[0].mimeType ?? null,
       },
     };
-    if (isError) response.isError = true;
-    return response;
   }
   
   // Multiple parts or mixed - return structured object
@@ -145,12 +146,25 @@ function normalizeContent(
   if (imageParts.length > 0) {
     response.images = imageParts;
   }
-
-  if (isError) {
-    response.isError = true;
-  }
   
   return response;
+}
+
+function findCurrentTurnToolResultStart(messages: unknown[]): number {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (typeof message !== 'object' || message === null) continue;
+
+    const role = 'role' in message ? (message as { role?: unknown }).role : undefined;
+    if (role !== 'assistant') continue;
+
+    const stopReason = 'stopReason' in message ? (message as { stopReason?: unknown }).stopReason : undefined;
+    if (stopReason === 'toolUse') {
+      return i + 1;
+    }
+  }
+
+  return 0;
 }
 
 /**

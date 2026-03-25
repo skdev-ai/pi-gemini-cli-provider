@@ -8,6 +8,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  parseSSEStream,
   parseA2AResult,
   extractTextContent,
   extractToolCall,
@@ -229,6 +230,39 @@ const emptyPartsEvent: A2AResult = {
 // ============================================================================
 // Tests
 // ============================================================================
+
+describe('parseSSEStream', () => {
+  it('yields SSE events progressively before the stream closes', async () => {
+    let controllerRef: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const encoder = new TextEncoder();
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controllerRef = controller;
+      },
+    });
+
+    const iterator = parseSSEStream(stream)[Symbol.asyncIterator]();
+
+    controllerRef!.enqueue(
+      encoder.encode(
+        'data: ' + JSON.stringify({
+          jsonrpc: '2.0',
+          result: textContentEvent,
+        }) + '\n\n',
+      ),
+    );
+
+    const first = await iterator.next();
+    expect(first.done).toBe(false);
+    expect(first.value?.kind).toBe('text-content');
+    expect(first.value?.text).toContain('Searching for information about');
+
+    controllerRef!.close();
+    const second = await iterator.next();
+    expect(second.done).toBe(true);
+  });
+});
 
 describe('parseA2AResult', () => {
   it('should parse text-content event with extracted text', () => {

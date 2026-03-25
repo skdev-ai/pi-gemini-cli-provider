@@ -33,12 +33,18 @@ export async function* parseSSEStream(
   options?: { signal?: AbortSignal }
 ): AsyncIterable<ParsedA2AEvent> {
   const { signal } = options ?? {};
-  
-  // Create event queue for producer-consumer pattern
+
+  const decoder = new TextDecoder();
   const eventQueue: ParsedA2AEvent[] = [];
-  const eventListeners: Array<(event: ParsedA2AEvent) => void> = [];
+  const waiters: Array<() => void> = [];
   let done = false;
   let parseError: Error | null = null;
+
+  const notify = (): void => {
+    while (waiters.length > 0) {
+      waiters.shift()!();
+    }
+  };
 
   // Create parser using eventsource-parser
   const parser = createParser({
@@ -53,62 +59,78 @@ export async function* parseSSEStream(
         const parsedEvent = parseA2AResult(result);
         if (parsedEvent) {
           eventQueue.push(parsedEvent);
-          // Notify waiting consumers
-          eventListeners.forEach(listener => listener(parsedEvent));
+          notify();
         }
       } catch (err) {
-        // Parse errors are captured but don't stop the stream
-        // Invalid JSON events are skipped silently
         parseError = err instanceof Error ? err : new Error(String(err));
+        done = true;
+        notify();
       }
     },
   });
 
-  // Set up timeout for response
   const timeoutId = signal
     ? null
     : setTimeout(() => {
         if (!done) {
           parseError = new Error(`Response timeout after ${RESPONSE_TIMEOUT_MS}ms`);
           done = true;
+          notify();
         }
       }, RESPONSE_TIMEOUT_MS);
 
-  // Read the stream
   const reader = stream.getReader();
-  try {
-    while (!done && !signal?.aborted) {
-      const { value, done: streamDone } = await reader.read();
-      
-      if (streamDone) {
+  const readerPromise = (async () => {
+    try {
+      while (!done && !signal?.aborted) {
+        const { value, done: streamDone } = await reader.read();
+
+        if (streamDone) {
+          done = true;
+          notify();
+          break;
+        }
+
+        if (value) {
+          parser.feed(decoder.decode(value, { stream: true }));
+        }
+      }
+    } catch (err) {
+      if (signal?.aborted) {
         done = true;
+      } else {
+        parseError = err instanceof Error ? err : new Error(String(err));
+        done = true;
+      }
+      notify();
+    } finally {
+      parser.feed(decoder.decode());
+      if (timeoutId) clearTimeout(timeoutId);
+      reader.releaseLock();
+      done = true;
+      notify();
+    }
+  })();
+
+  try {
+    while (true) {
+      if (eventQueue.length > 0) {
+        yield eventQueue.shift()!;
+        continue;
+      }
+
+      if (done) {
         break;
       }
-      
-      if (value) {
-        const decoder = new TextDecoder();
-        parser.feed(decoder.decode(value));
-      }
-    }
-  } catch (err) {
-    if (signal?.aborted) {
-      // Aborted is not an error - just stop parsing
-      done = true;
-    } else {
-      parseError = err instanceof Error ? err : new Error(String(err));
-      done = true;
+
+      await new Promise<void>((resolve) => {
+        waiters.push(resolve);
+      });
     }
   } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-    reader.releaseLock();
+    await readerPromise;
   }
 
-  // Yield all queued events
-  for (const event of eventQueue) {
-    yield event;
-  }
-
-  // Throw if there was a parse error
   if (parseError) {
     throw parseError;
   }

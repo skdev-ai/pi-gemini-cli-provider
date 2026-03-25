@@ -28,8 +28,11 @@ describe('result-extractor', () => {
     ).toBe(false);
   });
 
-  it('extracts tool result messages in order', () => {
+  it('extracts tool result messages from the current tool-use turn only', () => {
     const messages = [
+      { role: 'toolResult', toolCallId: 'stale', toolName: 'read', content: [] },
+      { role: 'assistant', stopReason: 'stop', content: [] },
+      { role: 'assistant', stopReason: 'toolUse', content: [] },
       { role: 'toolResult', toolCallId: 'c1', toolName: 'read', content: [] },
       { role: 'assistant', content: [] },
       { role: 'toolResult', toolCallId: 'c2', toolName: 'bash', content: [] },
@@ -59,7 +62,7 @@ describe('result-extractor', () => {
     });
   });
 
-  it('passes through error state in normalized payloads', () => {
+  it('preserves error state separately from the response payload', () => {
     const normalized = normalizeToolResult({
       role: 'toolResult',
       toolCallId: 'c2',
@@ -69,8 +72,9 @@ describe('result-extractor', () => {
     });
 
     expect(normalized.isError).toBe(true);
-    expect(normalized.payload.response).toEqual({
-      output: 'command failed',
+    expect(normalized.payload).toEqual({
+      name: 'bash',
+      response: { output: 'command failed' },
       isError: true,
     });
   });
@@ -89,8 +93,20 @@ describe('result-extractor', () => {
     });
   });
 
-  it('extracts and normalizes all tool results', () => {
+  it('extracts and normalizes only current-turn tool results', () => {
     const results = extractAllToolResults([
+      {
+        role: 'toolResult',
+        toolCallId: 'stale',
+        toolName: 'old',
+        isError: false,
+        content: [{ type: 'text', text: 'ignore me' }],
+      },
+      {
+        role: 'assistant',
+        stopReason: 'toolUse',
+        content: [],
+      },
       {
         role: 'toolResult',
         toolCallId: 'c1',
@@ -101,6 +117,7 @@ describe('result-extractor', () => {
     ]);
 
     expect(results).toHaveLength(1);
+    expect(results[0]?.toolCallId).toBe('c1');
     expect(results[0]?.payload.name).toBe('read');
   });
 });

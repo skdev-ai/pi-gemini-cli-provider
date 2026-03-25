@@ -188,8 +188,12 @@ describe('inject_result patch', () => {
         expect(content).toContain('pendingToolConfirmationDetails.delete(callId)');
         expect(content).toContain('pendingCorrelationIds.delete(callId)');
         expect(content).toContain('toolsAlreadyConfirmed.add(callId)');
-        // Verify fallback for resultDisplay
-        expect(content).toContain('functionResponse.response?.output || JSON.stringify(functionResponse.response)');
+        // Verify resultDisplay and explicit error/status handling
+        expect(content).toContain('const isError = functionResponse.isError === true;');
+        expect(content).toContain("status: isError ? 'error' : 'success'");
+        expect(content).toContain("error: errorMessage");
+        expect(content).toContain("errorType: isError ? 'tool_execution_error' : undefined");
+        expect(content).toContain('const resultDisplay = responsePayload?.output || JSON.stringify(responsePayload) ||');
       } finally {
         cleanupTestBundle(testBundle);
       }
@@ -291,7 +295,7 @@ describe('inject_result patch', () => {
 
     it('INJECT_RESULT_CASE contains completedToolCall construction', () => {
       expect(INJECT_RESULT_CASE).toContain('completedToolCall');
-      expect(INJECT_RESULT_CASE).toContain('status: \'success\'');
+      expect(INJECT_RESULT_CASE).toContain("status: isError ? 'error' : 'success'");
       expect(INJECT_RESULT_CASE).toContain('this.completedToolCalls.push');
     });
   });

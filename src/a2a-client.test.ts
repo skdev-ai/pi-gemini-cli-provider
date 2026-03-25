@@ -264,7 +264,7 @@ describe('injectResult', () => {
     vi.clearAllMocks();
   });
 
-  it('posts to root endpoint with inject_result method', async () => {
+  it('posts to root endpoint with message/stream inject_result body', async () => {
     mockFetch.mockResolvedValueOnce(createMockResponse());
 
     const params = {
@@ -291,15 +291,48 @@ describe('injectResult', () => {
     expect(body).toEqual({
       id: expect.stringMatching(/^req_/),
       jsonrpc: '2.0',
-      method: 'tasks/inject_result',
+      method: 'message/stream',
       params: {
         taskId: 'task_123',
-        callId: 'call_456',
-        functionResponse: {
-          name: 'mcp_gsd-test_test_echo',
-          response: { result: 'success' },
+        message: {
+          role: 'user',
+          parts: [
+            {
+              kind: 'data',
+              data: {
+                callId: 'call_456',
+                outcome: 'inject_result',
+                functionResponse: {
+                  name: 'mcp_gsd-test_test_echo',
+                  response: { result: 'success' },
+                },
+              },
+            },
+          ],
+          messageId: expect.stringMatching(/^req_/),
         },
       },
+    });
+  });
+
+  it('includes top-level isError in the wire payload when provided', async () => {
+    mockFetch.mockResolvedValueOnce(createMockResponse());
+
+    await injectResult({
+      taskId: 'task_err',
+      callId: 'call_err',
+      toolName: 'mcp_tools_bash',
+      functionResponse: { output: 'command failed' },
+      isError: true,
+    });
+
+    const callArgs = mockFetch.mock.calls[0];
+    const body = JSON.parse(callArgs[1]?.body as string);
+
+    expect(body.params.message.parts[0].data.functionResponse).toEqual({
+      name: 'mcp_tools_bash',
+      response: { output: 'command failed' },
+      isError: true,
     });
   });
 

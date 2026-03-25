@@ -436,15 +436,121 @@ describe('streamSimple', () => {
     });
   });
 
-  it('re-call injects results and continues from injectResult stream without empty follow-up prompt', async () => {
-    const mockTaskId = 'task_replay';
-    const mockContextId = 'ctx_replay';
+  it('re-call injects all available results before surfacing the next toolUse stop', async () => {
+    const mockTaskId = 'task_multi';
+    const mockContextId = 'ctx_multi';
 
     mockGetPendingToolCalls.mockReturnValue([
       {
         callId: 'call_1',
-        name: 'mcp_tools_search',
-            args: { query: 'test' },
+        name: 'mcp_tools_read',
+        args: { path: 'a.txt' },
+        status: 'scheduled',
+      },
+      {
+        callId: 'call_2',
+        name: 'mcp_tools_bash',
+        args: { command: 'pwd' },
+        status: 'scheduled',
+      },
+    ]);
+
+    mockInjectResult
+      .mockResolvedValueOnce({
+        taskId: mockTaskId,
+        sseStream: new ReadableStream(),
+        metadata: { url: 'http://localhost:41242/', requestId: 'req_inject_1' },
+      })
+      .mockResolvedValueOnce({
+        taskId: mockTaskId,
+        sseStream: new ReadableStream(),
+        metadata: { url: 'http://localhost:41242/', requestId: 'req_inject_2' },
+      });
+
+    mockParseSSEStream
+      .mockImplementationOnce(async function* () {
+        yield createTextEvent('First result received');
+      })
+      .mockImplementationOnce(async function* () {
+        yield createToolCallEvent('call_3', 'mcp_tools_write', { path: 'out.txt' });
+        yield createStateChangeEvent('input-required', true, true);
+      });
+
+    mockGetTaskState.mockReturnValue({
+      taskId: mockTaskId,
+      contextId: mockContextId,
+      state: 'input-required',
+      awaitingApproval: true,
+      pendingToolCalls: [
+        {
+          callId: 'call_3',
+          name: 'mcp_tools_write',
+          args: { path: 'out.txt' },
+          status: 'scheduled',
+        },
+      ],
+      isTerminal: false,
+    });
+
+    const { stream, result } = streamSimple({
+      prompt: '',
+      context: {
+        messages: [
+          { role: 'assistant', stopReason: 'toolUse', content: [] },
+          {
+            role: 'toolResult',
+            toolCallId: 'call_1',
+            toolName: 'mcp_tools_read',
+            isError: false,
+            content: [{ type: 'text', text: 'file text' }],
+          },
+          {
+            role: 'toolResult',
+            toolCallId: 'call_2',
+            toolName: 'mcp_tools_bash',
+            isError: false,
+            content: [{ type: 'text', text: '/tmp' }],
+          },
+        ],
+      } as any,
+      taskId: mockTaskId,
+      contextId: mockContextId,
+    });
+
+    const events = await collectEvents(stream);
+    const finalResult = await result;
+
+    expect(mockInjectResult).toHaveBeenCalledTimes(2);
+    expect(mockInjectResult).toHaveBeenNthCalledWith(1, {
+      taskId: mockTaskId,
+      callId: 'call_1',
+      toolName: 'mcp_tools_read',
+      functionResponse: { output: 'file text' },
+      isError: undefined,
+      signal: undefined,
+    });
+    expect(mockInjectResult).toHaveBeenNthCalledWith(2, {
+      taskId: mockTaskId,
+      callId: 'call_2',
+      toolName: 'mcp_tools_bash',
+      functionResponse: { output: '/tmp' },
+      isError: undefined,
+      signal: undefined,
+    });
+    expect(mockClearPendingToolCalls).toHaveBeenCalledWith(mockTaskId, ['call_1', 'call_2']);
+    expect(finalResult.stopReason).toBe('toolUse');
+    expect(events.at(-1)).toMatchObject({ type: 'done', reason: 'toolUse' });
+  });
+
+  it('re-call injects error results with explicit error metadata', async () => {
+    const mockTaskId = 'task_error_result';
+    const mockContextId = 'ctx_error_result';
+
+    mockGetPendingToolCalls.mockReturnValue([
+      {
+        callId: 'call_err',
+        name: 'mcp_tools_bash',
+        args: { command: 'false' },
         status: 'scheduled',
       },
     ]);
@@ -452,11 +558,10 @@ describe('streamSimple', () => {
     mockInjectResult.mockResolvedValue({
       taskId: mockTaskId,
       sseStream: new ReadableStream(),
-      metadata: { url: 'http://localhost:41242/', requestId: 'req_inject' },
+      metadata: { url: 'http://localhost:41242/', requestId: 'req_inject_err' },
     });
 
     mockParseSSEStream.mockImplementation(async function* () {
-      yield createTextEvent('Based on the search results');
       yield createStateChangeEvent('completed', false, true);
     });
 
@@ -473,35 +578,89 @@ describe('streamSimple', () => {
       prompt: '',
       context: {
         messages: [
+          { role: 'assistant', stopReason: 'toolUse', content: [] },
           {
             role: 'toolResult',
-            toolCallId: 'call_1',
-            toolName: 'mcp_tools_search',
-            isError: false,
-            content: [{ type: 'text', text: 'Search results' }],
+            toolCallId: 'call_err',
+            toolName: 'mcp_tools_bash',
+            isError: true,
+            content: [{ type: 'text', text: 'command failed' }],
           },
         ],
-      },
+      } as any,
       taskId: mockTaskId,
       contextId: mockContextId,
     });
 
-    const events = await collectEvents(stream);
+    await collectEvents(stream);
     await result;
 
     expect(mockInjectResult).toHaveBeenCalledWith({
       taskId: mockTaskId,
-      callId: 'call_1',
-      toolName: 'mcp_tools_search',
-      functionResponse: expect.anything(),
+      callId: 'call_err',
+      toolName: 'mcp_tools_bash',
+      functionResponse: { output: 'command failed' },
+      isError: true,
       signal: undefined,
     });
-    expect(mockClearPendingToolCalls).toHaveBeenCalledWith(mockTaskId, ['call_1']);
-    expect(mockSendMessageStream).not.toHaveBeenCalled();
-    expect(events.at(-1)).toMatchObject({
-      type: 'done',
-      reason: 'stop',
+  });
+
+  it('treats provided taskId/contextId as authoritative re-call routing', async () => {
+    const mockTaskId = 'task_direct_recall';
+    const mockContextId = 'ctx_direct_recall';
+
+    mockGetPendingToolCalls.mockReturnValue([
+      {
+        callId: 'call_direct',
+        name: 'mcp_tools_read',
+        args: { path: 'x' },
+        status: 'scheduled',
+      },
+    ]);
+
+    mockInjectResult.mockResolvedValue({
+      taskId: mockTaskId,
+      sseStream: new ReadableStream(),
+      metadata: { url: 'http://localhost:41242/', requestId: 'req_direct_recall' },
     });
+
+    mockParseSSEStream.mockImplementation(async function* () {
+      yield createStateChangeEvent('completed', false, true);
+    });
+
+    mockGetTaskState.mockReturnValue({
+      taskId: mockTaskId,
+      contextId: mockContextId,
+      state: 'completed',
+      awaitingApproval: false,
+      pendingToolCalls: [],
+      isTerminal: true,
+    });
+
+    const { stream, result } = streamSimple({
+      prompt: 'ignored for recall routing',
+      context: {
+        messages: [
+          { role: 'user', content: [{ type: 'text', text: 'fresh-looking prompt' }] },
+          {
+            role: 'toolResult',
+            toolCallId: 'call_direct',
+            toolName: 'mcp_tools_read',
+            isError: false,
+            content: [{ type: 'text', text: 'value' }],
+          },
+          { role: 'assistant', content: [] },
+        ],
+      } as any,
+      taskId: mockTaskId,
+      contextId: mockContextId,
+    });
+
+    await collectEvents(stream);
+    await result;
+
+    expect(mockInjectResult).toHaveBeenCalledTimes(1);
+    expect(mockSendMessageStream).not.toHaveBeenCalled();
   });
 
   it('treats stale historical toolResult messages as a fresh prompt', async () => {
@@ -980,7 +1139,8 @@ describe('streamSimpleGsd', () => {
       taskId: 'task_race',
       callId: 'call_race',
       toolName: 'mcp_tools_search',
-      functionResponse: expect.anything(),
+      functionResponse: { output: 'Search results' },
+      isError: undefined,
       signal: undefined,
     });
     expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
@@ -1079,7 +1239,8 @@ describe('streamSimpleGsd', () => {
       taskId: 'task_initial',
       callId: 'call_recall',
       toolName: 'mcp_tools_search',
-      functionResponse: expect.anything(),
+      functionResponse: { output: 'Search results' },
+      isError: undefined,
       signal: undefined,
     });
   });

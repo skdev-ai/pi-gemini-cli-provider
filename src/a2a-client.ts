@@ -75,8 +75,10 @@ export interface InjectResultParams {
   callId: string;
   /** Tool name (e.g., mcp_server_tool) */
   toolName: string;
-  /** Function response object */
+  /** Function response content */
   functionResponse: unknown;
+  /** Whether the tool execution failed */
+  isError?: boolean;
   /** Optional abort signal */
   signal?: AbortSignal;
 }
@@ -215,10 +217,14 @@ export async function sendMessageStream(
  * Injects a tool result into an existing A2A task.
  * 
  * Posts JSON-RPC request to root endpoint with:
- * - method: "tasks/inject_result" in body
- * - taskId, callId, and functionResponse in params
+ * - method: "message/stream" in body
+ * - taskId and a data-part message containing:
+ *   - callId
+ *   - outcome: "inject_result"
+ *   - functionResponse
  * 
  * Used after tool execution to provide results back to the A2A task.
+ * This matches the live A2A tool-confirmation path used by approveToolCall().
  * 
  * @param params - Injection parameters
  * @returns InjectResultResult with SSE stream
@@ -227,22 +233,35 @@ export async function sendMessageStream(
 export async function injectResult(
   params: InjectResultParams
 ): Promise<InjectResultResult> {
-  const { taskId, callId, toolName, functionResponse, signal } = params;
+  const { taskId, callId, toolName, functionResponse, isError, signal } = params;
   
   const url = `http://localhost:${DEFAULT_A2A_PORT}/`;
   const requestId = generateRequestId();
 
-  // Construct JSON-RPC request body for inject_result
+  // Construct JSON-RPC request body for inject_result via message/stream
   const requestBody: A2AInjectResultRequest = {
     id: requestId,
     jsonrpc: '2.0',
-    method: 'tasks/inject_result',
+    method: 'message/stream',
     params: {
       taskId,
-      callId,
-      functionResponse: {
-        name: toolName,
-        response: functionResponse,
+      message: {
+        role: 'user',
+        parts: [
+          {
+            kind: 'data',
+            data: {
+              callId,
+              outcome: 'inject_result',
+              functionResponse: {
+                name: toolName,
+                response: functionResponse,
+                ...(isError !== undefined ? { isError } : {}),
+              },
+            },
+          },
+        ],
+        messageId: requestId,
       },
     },
   };

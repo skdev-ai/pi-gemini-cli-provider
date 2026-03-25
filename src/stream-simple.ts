@@ -310,7 +310,7 @@ export function streamSimple(params: StreamSimpleParams): {
     try {
       await incrementProviderTaskCount();
 
-      const isReCall = detectReCall(context.messages);
+      const isReCall = Boolean(taskId);
       const result = isReCall
         ? await handleReCall(stream, {
             context,
@@ -553,6 +553,7 @@ async function handleReCall(
   const partialMessage = createPartialMessage();
   const eventState = createStreamEventState();
   let stopReason: string | undefined;
+  const injectedCallIds: string[] = [];
 
   for (const item of workItems) {
     try {
@@ -561,31 +562,16 @@ async function handleReCall(
         callId: item.callId,
         toolName: item.toolName,
         functionResponse: item.result.response,
+        isError: item.result.isError,
         signal,
       });
+      injectedCallIds.push(item.callId);
 
       for await (const event of parseSSEStream(sseStream, { signal })) {
         updateTaskState(taskId, event);
         const nextPartial = updatePartialMessage(partialMessage, event);
         copyPartialMessage(partialMessage, nextPartial);
         emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([event]), createMessageMetadata(model));
-
-        const updatedState = getTaskState(taskId);
-        if (updatedState?.awaitingApproval) {
-          const morePendingCalls = getPendingToolCalls(taskId);
-          if (morePendingCalls.length > 0) {
-            stopReason = 'toolUse';
-            break;
-          }
-        }
-
-        if (updatedState?.isTerminal) {
-          break;
-        }
-      }
-
-      if (stopReason || getTaskState(taskId)?.isTerminal) {
-        break;
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Result injection failed';
@@ -594,7 +580,15 @@ async function handleReCall(
     }
   }
 
-  clearPendingToolCalls(taskId, workItems.map((item) => item.callId));
+  const updatedState = getTaskState(taskId);
+  if (updatedState?.awaitingApproval) {
+    const morePendingCalls = getPendingToolCalls(taskId);
+    if (morePendingCalls.length > 0) {
+      stopReason = 'toolUse';
+    }
+  }
+
+  clearPendingToolCalls(taskId, injectedCallIds);
 
   const finalMessage = {
     text: partialMessage.text,

@@ -492,7 +492,7 @@ describe('streamSimple', () => {
     expect(mockInjectResult).toHaveBeenCalledWith({
       taskId: mockTaskId,
       callId: 'call_1',
-      toolName: 'search',
+      toolName: 'mcp_tools_search',
       functionResponse: expect.anything(),
       signal: undefined,
     });
@@ -979,7 +979,7 @@ describe('streamSimpleGsd', () => {
     expect(mockInjectResult).toHaveBeenCalledWith({
       taskId: 'task_race',
       callId: 'call_race',
-      toolName: 'search',
+      toolName: 'mcp_tools_search',
       functionResponse: expect.anything(),
       signal: undefined,
     });
@@ -1078,7 +1078,7 @@ describe('streamSimpleGsd', () => {
     expect(mockInjectResult).toHaveBeenCalledWith({
       taskId: 'task_initial',
       callId: 'call_recall',
-      toolName: 'search',
+      toolName: 'mcp_tools_search',
       functionResponse: expect.anything(),
       signal: undefined,
     });

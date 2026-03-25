@@ -161,10 +161,11 @@ export function buildReinjectionWorkList(
       continue;
     }
     
-    // Build work item
+    // Build work item. Use the original tool name for protocol reinjection;
+    // displayName is only for user-facing approval UI.
     workItems.push({
       callId: toolCall.callId,
-      toolName: routing.displayName,
+      toolName: toolCall.name,
       args: toolCall.args,
       result: result.payload,
       routing: routing.routing,

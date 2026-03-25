@@ -228,17 +228,25 @@ describe('addMcpPrefix', () => {
 // ============================================================================
 
 describe('buildReinjectionWorkList', () => {
-  it('should build work list for single MCP tool', () => {
+  it('should build work list for single MCP tool using full protocol name', () => {
     const workItems = buildReinjectionWorkList([mcpToolCall], [mcpResult]);
 
     expect(workItems).toHaveLength(1);
     expect(workItems[0]).toEqual({
       callId: 'mcp_tools_read_123',
-      toolName: 'read',
+      toolName: 'mcp_tools_read',
       args: { path: 'README.md' },
       result: mcpResult.payload,
       routing: 'mcp',
     });
+  });
+
+  it('should preserve full MCP protocol name even when display name is stripped for UI', () => {
+    const workItems = buildReinjectionWorkList([mcpToolCall], [mcpResult]);
+    const routing = classifyToolRouting(mcpToolCall);
+
+    expect(routing.displayName).toBe('read');
+    expect(workItems[0]?.toolName).toBe('mcp_tools_read');
   });
 
   it('should build work list for single native tool', () => {

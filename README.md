@@ -640,14 +640,14 @@ GEMINI_A2A_LIVE=1 npm test -- src/integration.test.ts
 **What the live tests verify:**
 - ✅ Prerequisite checks (patches, server health)
 - ✅ MCP tool call interception (`stopReason: 'toolUse'`)
-- ⚠️ Result reinjection via `inject_result` (patch applied, but scheduler doesn't run in headless mode)
-- ⚠️ Multi-turn conversation continuity (depends on scheduler)
+- ✅ Result reinjection via `inject_result` after the post-S06 patch fixes
+- ✅ Multi-turn protocol continuity through the same task/re-call flow
 - ⚠️ Error handling scenarios
 
-**Known Limitations:**
-- The A2A server's scheduler doesn't run in headless mode, so model continuation after `inject_result` doesn't trigger automatically
-- The `inject_result` patch correctly marks tools as complete, but the scheduler that would continue model generation isn't active
-- This is an architectural limitation of the A2A server in headless configurations
+**Current Notes:**
+- Post-S06 bugfixes corrected the `inject_result` patch insertion point, preserved pending tools on input-required abort, and fixed workspace settings generation so the live provider path matches the intended protocol.
+- Live E2E validation confirmed the core flow: prompt → MCP tool call → GSD executes tool → re-call with result → `inject_result` → model continuation → terminal stop.
+- Continuation content quality is still model-dependent. An empty or thin continuation is a model/runtime behavior issue, not evidence that the provider bridge failed.
 
 **Note:** Live tests may take 30-60 seconds to run as they make real API calls to Gemini. Tests will skip if `GEMINI_A2A_LIVE` is not set to `1`.
 

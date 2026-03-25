@@ -445,18 +445,27 @@ async function handleFreshPrompt(
   let serverContextId: string | undefined;
 
   for await (const event of parseSSEStream(sseStream, { signal })) {
-    // Capture server's real task/context IDs from first event
-    if (!serverTaskId && event.serverTaskId) serverTaskId = event.serverTaskId;
-    if (!serverContextId && event.serverContextId) serverContextId = event.serverContextId;
+    // Capture server's real task/context IDs from first event.
+    // Re-register the task under the server's ID so re-calls can find pending tools.
+    if (!serverTaskId && event.serverTaskId) {
+      serverTaskId = event.serverTaskId;
+      serverContextId = event.serverContextId;
+      // Migrate local task state from our generated ID to server's ID
+      const existingState = getTaskState(a2aTaskId);
+      if (existingState) {
+        createTaskWithIds(serverTaskId, serverContextId ?? existingState.contextId);
+      }
+    }
 
-    updateTaskState(a2aTaskId, event);
+    updateTaskState(serverTaskId ?? a2aTaskId, event);
     const nextPartial = updatePartialMessage(partialMessage, event);
     copyPartialMessage(partialMessage, nextPartial);
     emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([event]), createMessageMetadata(model));
 
-    const updatedState = getTaskState(a2aTaskId);
+    const effectiveTaskId = serverTaskId ?? a2aTaskId;
+    const updatedState = getTaskState(effectiveTaskId);
     if (updatedState?.awaitingApproval) {
-      const pendingToolCalls = getPendingToolCalls(a2aTaskId);
+      const pendingToolCalls = getPendingToolCalls(effectiveTaskId);
 
       if (pendingToolCalls.length > 0) {
         const routingDecisions = pendingToolCalls.map(classifyToolRouting);
@@ -484,27 +493,27 @@ async function handleFreshPrompt(
               let approveEventCount = 0;
               for await (const approveEvent of parseSSEStream(approveStream, { signal })) {
                 approveEventCount++;
-                console.error(`[gemini-a2a] approve-event #${approveEventCount}: kind=${approveEvent.kind} state=${approveEvent.result?.status?.state} final=${approveEvent.result?.final} text=${(approveEvent.text ?? '').slice(0, 80)}`);
-                updateTaskState(a2aTaskId, approveEvent);
+                fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] approve-event #${approveEventCount}: kind=${approveEvent.kind} state=${approveEvent.result?.status?.state} final=${approveEvent.result?.final} text=${(approveEvent.text ?? '').slice(0, 80)}\n`);
+                updateTaskState(effectiveTaskId, approveEvent);
                 const approvePartial = updatePartialMessage(partialMessage, approveEvent);
                 copyPartialMessage(partialMessage, approvePartial);
                 emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([approveEvent]), createMessageMetadata(model));
 
-                const approvedState = getTaskState(a2aTaskId);
+                const approvedState = getTaskState(effectiveTaskId);
                 if (approvedState?.isTerminal) {
-                  console.error(`[gemini-a2a] approve-loop: terminal state reached after ${approveEventCount} events`);
+                  fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] approve-loop: TERMINAL after ${approveEventCount} events\n`);
                   break;
                 }
               }
-              console.error(`[gemini-a2a] approve-loop: exited after ${approveEventCount} events, partialText=${partialMessage.text.length} chars`);
+              fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] approve-loop: exited after ${approveEventCount} events, text=${partialMessage.text.length}chars\n`);
             } catch (error) {
               const errorMessage = error instanceof Error ? error.message : 'Auto-approval failed';
-              markTaskFailed(a2aTaskId, errorMessage);
+              markTaskFailed(effectiveTaskId, errorMessage);
               throw new Error(`Failed to auto-approve native tool ${toolCall.callId}: ${errorMessage}`);
             }
           }
 
-          clearPendingToolCalls(a2aTaskId, pendingToolCalls.map((tc) => tc.callId));
+          clearPendingToolCalls(effectiveTaskId, pendingToolCalls.map((tc) => tc.callId));
         }
       }
     }

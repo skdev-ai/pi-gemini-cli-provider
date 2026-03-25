@@ -183,6 +183,10 @@ export interface A2AMessagePart {
   text?: string;
   /** Structured data when kind === 'data' */
   data?: {
+    /** Thought subject for thought events */
+    subject?: string;
+    /** Thought description/body for thought events */
+    description?: string;
     /** Tool call request details */
     request?: { callId: string; name: string; args: unknown };
     /** Tool execution status (sibling to request, not nested) */

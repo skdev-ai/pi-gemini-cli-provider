@@ -30,7 +30,7 @@ export type {
 } from './a2a-client.js';
 
 // Export SSE parser for stream processing
-export { parseSSEStream, parseA2AResult, extractTextContent, extractToolCall, isAwaitingApproval } from './sse-parser.js';
+export { parseSSEStream, parseA2AResult, extractTextContent, extractThoughtContent, extractToolCall, isAwaitingApproval } from './sse-parser.js';
 export type { ParsedA2AEvent } from './types.js';
 
 // Export task manager for state tracking

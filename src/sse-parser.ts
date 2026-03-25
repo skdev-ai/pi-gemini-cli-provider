@@ -161,9 +161,14 @@ export function parseA2AResult(result: A2AResult): ParsedA2AEvent | null {
     result,
   };
 
-  // Extract text content for text-content and thought events
-  if (kind === 'text-content' || kind === 'thought') {
+  // Extract text content for assistant text events
+  if (kind === 'text-content') {
     baseEvent.text = extractTextContent(result);
+  }
+
+  // Extract thought content from structured data parts
+  if (kind === 'thought') {
+    baseEvent.text = extractThoughtContent(result);
   }
 
   // Extract tool call metadata for tool-call-update events
@@ -198,6 +203,35 @@ export function extractTextContent(result: A2AResult): string {
   const parts = result.status?.message?.parts ?? [];
   const textParts = parts.filter(part => part.kind === 'text' && part.text);
   return textParts.map(part => part.text!).join('');
+}
+
+/**
+ * Extracts thought content from an A2AResult.
+ *
+ * A2A thought events use data parts with optional subject and description fields.
+ * Each usable part is rendered as either `subject: description`, `subject`, or
+ * `description`, then combined with newlines.
+ *
+ * @param result - A2AResult to extract thought text from
+ * @returns Concatenated thought content or empty string
+ */
+export function extractThoughtContent(result: A2AResult): string {
+  const parts = result.status?.message?.parts ?? [];
+
+  return parts
+    .filter(part => part.kind === 'data' && part.data)
+    .map(part => {
+      const subject = part.data?.subject?.trim() ?? '';
+      const description = part.data?.description?.trim() ?? '';
+
+      if (subject && description) {
+        return `${subject}: ${description}`;
+      }
+
+      return subject || description;
+    })
+    .filter(Boolean)
+    .join('\n');
 }
 
 /**

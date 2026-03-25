@@ -11,6 +11,7 @@ import {
   parseSSEStream,
   parseA2AResult,
   extractTextContent,
+  extractThoughtContent,
   extractToolCall,
   isAwaitingApproval,
   isTerminalState,
@@ -49,8 +50,11 @@ const thoughtEvent: A2AResult = {
     message: {
       parts: [
         {
-          kind: 'text',
-          text: 'Let me think about this step by step...',
+          kind: 'data',
+          data: {
+            subject: 'Reasoning about next step',
+            description: 'Let me think about this step by step...',
+          },
         },
       ],
     },
@@ -279,7 +283,7 @@ describe('parseA2AResult', () => {
     
     expect(event).not.toBeNull();
     expect(event?.kind).toBe('thought');
-    expect(event?.text).toBe('Let me think about this step by step...');
+    expect(event?.text).toBe('Reasoning about next step: Let me think about this step by step...');
   });
 
   it('should parse tool-call-update event with tool call metadata', () => {
@@ -350,6 +354,11 @@ describe('extractTextContent', () => {
     expect(text).toBe('');
   });
 
+  it('should return empty string for data-backed thought events', () => {
+    const text = extractTextContent(thoughtEvent);
+    expect(text).toBe('');
+  });
+
   it('should return empty string for event with empty parts', () => {
     const text = extractTextContent(emptyPartsEvent);
     expect(text).toBe('');
@@ -359,6 +368,87 @@ describe('extractTextContent', () => {
     const invalidResult = { metadata: { coderAgent: { kind: 'text-content' } } } as A2AResult;
     const text = extractTextContent(invalidResult);
     expect(text).toBe('');
+  });
+});
+
+describe('extractThoughtContent', () => {
+  it('should extract thought text from data parts', () => {
+    const text = extractThoughtContent(thoughtEvent);
+    expect(text).toBe('Reasoning about next step: Let me think about this step by step...');
+  });
+
+  it('should prefer description when subject is missing', () => {
+    const descriptionOnlyEvent: A2AResult = {
+      metadata: {
+        coderAgent: { kind: 'thought' },
+      },
+      status: {
+        state: 'working',
+        message: {
+          parts: [
+            {
+              kind: 'data',
+              data: {
+                description: 'Just the description',
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    expect(extractThoughtContent(descriptionOnlyEvent)).toBe('Just the description');
+  });
+
+  it('should join multiple thought data parts with newlines', () => {
+    const multiPartThoughtEvent: A2AResult = {
+      metadata: {
+        coderAgent: { kind: 'thought' },
+      },
+      status: {
+        state: 'working',
+        message: {
+          parts: [
+            {
+              kind: 'data',
+              data: {
+                subject: 'Step 1',
+                description: 'Inspect package metadata',
+              },
+            },
+            {
+              kind: 'data',
+              data: {
+                description: 'Then compare against parser expectations',
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    expect(extractThoughtContent(multiPartThoughtEvent)).toBe(
+      'Step 1: Inspect package metadata\nThen compare against parser expectations'
+    );
+  });
+
+  it('should ignore non-data parts and empty thought data', () => {
+    const mixedEvent: A2AResult = {
+      metadata: {
+        coderAgent: { kind: 'thought' },
+      },
+      status: {
+        state: 'working',
+        message: {
+          parts: [
+            { kind: 'text', text: 'not thought data' },
+            { kind: 'data', data: {} },
+          ],
+        },
+      },
+    };
+
+    expect(extractThoughtContent(mixedEvent)).toBe('');
   });
 });
 

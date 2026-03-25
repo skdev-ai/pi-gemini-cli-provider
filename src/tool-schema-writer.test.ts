@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeToolSchemas, areSchemasStale, readToolSchemas, DENYLIST } from './tool-schema-writer.js';
 import { existsSync, readFileSync, unlinkSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
+import { tmpdir } from 'os';
 import { Type } from '@sinclair/typebox';
 
 // Mock tool schemas for testing (representative of real GSD tools)
@@ -117,7 +117,7 @@ const mockTools = [
 ];
 
 describe('tool-schema-writer', () => {
-  const schemaDir = join(homedir(), '.pi', 'agent', 'extensions', 'pi-gemini-cli-provider');
+  const schemaDir = join(tmpdir(), `pi-gemini-cli-provider-test-${process.pid}`);
   const schemaFileName = `test-tool-schemas-writer-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`;
   const schemaFilePath = join(schemaDir, schemaFileName);
 

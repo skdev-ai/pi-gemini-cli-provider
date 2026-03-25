@@ -75,21 +75,30 @@ export async function* parseSSEStream(
     },
   });
 
-  const timeoutId = signal
-    ? null
-    : setTimeout(() => {
-        if (!done) {
-          parseError = new Error(`Response timeout after ${RESPONSE_TIMEOUT_MS}ms`);
-          done = true;
-          notify();
-        }
-      }, RESPONSE_TIMEOUT_MS);
+  // Idle timeout — resets every time data arrives on the stream.
+  // This keeps the connection alive during long operations (e.g., web search
+  // + model processing after proceed_once approval) while still detecting
+  // hung connections.
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const resetIdleTimeout = (): void => {
+    if (signal) return; // caller manages lifetime via signal
+    if (timeoutId) clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => {
+      if (!done) {
+        parseError = new Error(`Response idle timeout after ${RESPONSE_TIMEOUT_MS}ms`);
+        done = true;
+        notify();
+      }
+    }, RESPONSE_TIMEOUT_MS);
+  };
+  resetIdleTimeout();
 
   const reader = stream.getReader();
   const readerPromise = (async () => {
     try {
       while (!done && !signal?.aborted) {
         const { value, done: streamDone } = await reader.read();
+        if (!streamDone && value) resetIdleTimeout();
 
         if (streamDone) {
           done = true;

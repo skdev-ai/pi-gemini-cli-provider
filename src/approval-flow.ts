@@ -103,10 +103,13 @@ export function isMcpTool(toolName: string): boolean {
  * @returns User-facing display name
  */
 export function stripMcpPrefix(toolName: string): string {
-  if (toolName.startsWith(MCP_SERVER_PREFIX)) {
-    return toolName.slice(MCP_SERVER_PREFIX.length);
+  // Strip repeatedly — the model sometimes double-prefixes after inject_result
+  // e.g., mcp_tools_mcp_tools_read → mcp_tools_read → read
+  let name = toolName;
+  while (name.startsWith(MCP_SERVER_PREFIX)) {
+    name = name.slice(MCP_SERVER_PREFIX.length);
   }
-  return toolName;
+  return name;
 }
 
 /**

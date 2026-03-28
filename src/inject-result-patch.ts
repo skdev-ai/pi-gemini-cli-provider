@@ -93,7 +93,7 @@ export const INJECT_RESULT_CASE = `} else if (outcomeString === "inject_result")
 
   logger.info('[Task] Injected result for callId: ' + callId);
   return true;
-}`;
+`;
 
 /**
  * Default fallback else block target.

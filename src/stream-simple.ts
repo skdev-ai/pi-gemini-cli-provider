@@ -8,7 +8,7 @@
  */
 
 import type { Context } from './pi-types.js';
-import { sendMessageStream, injectResult, approveToolCall, resubscribeTask } from './a2a-client.js';
+import { sendMessageStream, injectResult, approveToolCall } from './a2a-client.js';
 import { parseSSEStream } from './sse-parser.js';
 import {
   createTask,
@@ -590,10 +590,10 @@ async function handleReCall(
     try {
       const _fs = await import('node:fs');
 
-      // Send inject first, then resubscribe. The inject's secondary executor
-      // swaps the event bus — resubscribing after ensures we connect to the
-      // bus that the primary executor will publish tool events to.
-      await injectResult({
+      // With Patch 5, the inject SSE response stays open until the primary
+      // execution reaches a decision point (final:true). Read events directly
+      // from the inject response — no resubscribe needed.
+      const { sseStream: injectStream } = await injectResult({
         taskId,
         callId: item.callId,
         toolName: item.toolName,
@@ -602,11 +602,9 @@ async function handleReCall(
         signal,
       });
       injectedCallIds.push(item.callId);
-      _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] inject sent for ${item.callId}, resubscribing\n`);
-
-      const { sseStream: resubStream } = await resubscribeTask({ taskId, signal });
+      _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] inject sent for ${item.callId}, reading SSE response\n`);
       let _evtCount = 0;
-      for await (const event of parseSSEStream(resubStream, { signal, idleTimeoutMs: 2000 })) {
+      for await (const event of parseSSEStream(injectStream, { signal })) {
         _evtCount++;
         _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub evt #${_evtCount}: kind=${event.kind} state=${event.result?.status?.state} final=${event.result?.final} awaiting=${event.isAwaitingApproval} toolCall=${event.toolCall?.callId ?? 'none'}\n`);
         updateTaskState(taskId, event);
@@ -644,34 +642,7 @@ async function handleReCall(
           break;
         }
       }
-      _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub loop exited after ${_evtCount} events, stopReason=${stopReason}\n`);
-
-      // If no toolUse detected from live events, check the task snapshot
-      // one more time — the tool-call-update may have been registered after
-      // the resubscribe stream delivered events but before it closed.
-      if (!stopReason) {
-        try {
-          const { sseStream: checkStream } = await resubscribeTask({ taskId, signal });
-          for await (const checkEvt of parseSSEStream(checkStream, { signal, idleTimeoutMs: 5000 })) {
-            _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub-check evt: kind=${checkEvt.kind} awaiting=${checkEvt.isAwaitingApproval} toolCall=${checkEvt.toolCall?.callId ?? 'none'}\n`);
-            updateTaskState(taskId, checkEvt);
-            // Check for NEW tool calls not in injectedCallIds
-            if (checkEvt.isAwaitingApproval && checkEvt.toolCall && !injectedCallIds.includes(checkEvt.toolCall.callId)) {
-              if (isMcpTool(checkEvt.toolCall.name)) {
-                stopReason = 'toolUse';
-                // Add to partial message and emit to GSD
-                const nextP = updatePartialMessage(partialMessage, checkEvt);
-                copyPartialMessage(partialMessage, nextP);
-                emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([checkEvt]), createMessageMetadata(model));
-                _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub-check BREAK: new MCP tool ${checkEvt.toolCall.name}\n`);
-                break;
-              }
-            }
-          }
-          _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub-check done, stopReason=${stopReason}\n`);
-        } catch { /* ignore check failure */ }
-      }
-
+      _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] inject loop exited after ${_evtCount} events, stopReason=${stopReason}\n`);
       if (stopReason === 'toolUse') break;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Result injection failed';

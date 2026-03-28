@@ -316,7 +316,7 @@ function applyPatches(ctx: InstallerContext): void {
         throw new Error('Patch target not found: abortController input-required guard');
       }
 
-      const patch4Replacement = `        if (!abortController.signal.aborted) {\n          if (typeof currentTask !== "undefined" && currentTask && currentTask.taskState === "input-required") {\n            logger.info("[CoderAgentExecutor] Socket closed while task " + taskId + " awaits input. Preserving pending tools.");\n          }\n          else {\n            abortController.abort();\n          }\n        }`;
+      const patch4Replacement = `        if (!abortController.signal.aborted) {\n          try {\n            if (typeof currentTask !== "undefined" && currentTask && currentTask.taskState === "input-required") {\n              logger.info("[CoderAgentExecutor] Socket closed while task " + taskId + " awaits input. Preserving pending tools.");\n              return;\n            }\n          } catch (e) {\n            logger.info("[CoderAgentExecutor] Socket closed before task initialized for " + taskId + ". Skipping abort.");\n            return;\n          }\n          abortController.abort();\n        }`;
       writeFileSync(a2aPath, contentWithPatch3.replace(patch4Target, patch4Replacement), 'utf-8');
     }
     

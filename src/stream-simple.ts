@@ -588,6 +588,11 @@ async function handleReCall(
 
   for (const item of workItems) {
     try {
+      const _fs = await import('node:fs');
+
+      // Send inject first, then resubscribe. The inject's secondary executor
+      // swaps the event bus — resubscribing after ensures we connect to the
+      // bus that the primary executor will publish tool events to.
       await injectResult({
         taskId,
         callId: item.callId,
@@ -597,12 +602,7 @@ async function handleReCall(
         signal,
       });
       injectedCallIds.push(item.callId);
-
-      // Don't read the inject SSE response — it never delivers tool-call-update
-      // events (secondary executor path closes before scheduler emits them).
-      // Instead, immediately resubscribe to get ALL events via the event bus.
-      const _fs = await import('node:fs');
-      _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] inject sent, resubscribing to taskId=${taskId}\n`);
+      _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] inject sent for ${item.callId}, resubscribing\n`);
 
       const { sseStream: resubStream } = await resubscribeTask({ taskId, signal });
       let _evtCount = 0;
@@ -652,7 +652,7 @@ async function handleReCall(
       if (!stopReason) {
         try {
           const { sseStream: checkStream } = await resubscribeTask({ taskId, signal });
-          for await (const checkEvt of parseSSEStream(checkStream, { signal, idleTimeoutMs: 2000 })) {
+          for await (const checkEvt of parseSSEStream(checkStream, { signal, idleTimeoutMs: 5000 })) {
             _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub-check evt: kind=${checkEvt.kind} awaiting=${checkEvt.isAwaitingApproval} toolCall=${checkEvt.toolCall?.callId ?? 'none'}\n`);
             updateTaskState(taskId, checkEvt);
             // Check for NEW tool calls not in injectedCallIds

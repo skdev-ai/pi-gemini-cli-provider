@@ -34,6 +34,7 @@ export function createTask(): TaskState {
     awaitingApproval: false,
     pendingToolCalls: [],
     isTerminal: false,
+    clearedCallIds: new Set(),
   };
   
   taskStore.set(taskId, initialState);
@@ -55,6 +56,7 @@ export function createTaskWithIds(taskId: string, contextId: string): TaskState 
     awaitingApproval: false,
     pendingToolCalls: [],
     isTerminal: false,
+    clearedCallIds: new Set(),
   };
   
   taskStore.set(taskId, initialState);
@@ -135,15 +137,20 @@ export function updateTaskState(taskId: string, event: ParsedA2AEvent): TaskStat
  * @param toolCall - Tool call metadata to add/update
  */
 function updatePendingToolCall(state: TaskState, toolCall: ToolCallMetadata): void {
+  // Reject replayed events for calls that were already cleared.
+  // Resubscribe snapshots replay old tool-call-update events that can
+  // re-add cleared tools, causing stale awaitingApproval state.
+  if (state.clearedCallIds?.has(toolCall.callId)) {
+    return;
+  }
+
   const existingIndex = state.pendingToolCalls.findIndex(
     call => call.callId === toolCall.callId
   );
-  
+
   if (existingIndex >= 0) {
-    // Update existing call (e.g., status changed from validating to scheduled)
     state.pendingToolCalls[existingIndex] = toolCall;
   } else {
-    // Add new pending call
     state.pendingToolCalls.push(toolCall);
   }
 }
@@ -159,13 +166,21 @@ export function clearPendingToolCalls(taskId: string, callIds?: string[]): TaskS
   const state = taskStore.get(taskId);
   if (!state) return null;
   
+  if (!state.clearedCallIds) state.clearedCallIds = new Set();
+
   if (callIds && callIds.length > 0) {
-    // Remove specific calls
+    // Remove specific calls and record as cleared
+    for (const id of callIds) {
+      state.clearedCallIds.add(id);
+    }
     state.pendingToolCalls = state.pendingToolCalls.filter(
       call => !callIds.includes(call.callId)
     );
   } else {
-    // Clear all
+    // Clear all and record
+    for (const call of state.pendingToolCalls) {
+      state.clearedCallIds.add(call.callId);
+    }
     state.pendingToolCalls = [];
   }
   

@@ -341,6 +341,8 @@ export interface TaskState {
   isTerminal: boolean;
   /** Last error message if state is failed/canceled/rejected */
   errorMessage?: string;
+  /** Call IDs that have been cleared — prevents replayed snapshot events from re-adding them */
+  clearedCallIds?: Set<string>;
 }
 
 /**

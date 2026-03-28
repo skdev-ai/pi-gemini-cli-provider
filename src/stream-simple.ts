@@ -637,16 +637,24 @@ async function handleReCall(
   }
 
   // Clear injected calls BEFORE checking for new pending calls.
-  // Otherwise the just-injected calls still appear in pendingToolCalls
-  // and falsely trigger stopReason: 'toolUse'.
   clearPendingToolCalls(taskId, injectedCallIds);
 
+  // Check for new tool calls in local task state
   const updatedState = getTaskState(taskId);
   if (updatedState?.awaitingApproval) {
     const morePendingCalls = getPendingToolCalls(taskId);
     if (morePendingCalls.length > 0) {
       stopReason = 'toolUse';
     }
+  }
+
+  // If no stopReason and not terminal, the inject SSE stream ended while
+  // the executor is "Waiting for pending tools" — the model called a new tool
+  // but tool-call-update/confirmation events are never emitted in the inject
+  // flow (scheduler doesn't fire onToolCallsUpdate for inject executor runs).
+  // The only way the inject stream ends without terminal is if a new tool was called.
+  if (!stopReason && !updatedState?.isTerminal) {
+    stopReason = 'toolUse';
   }
 
   const finalMessage = {

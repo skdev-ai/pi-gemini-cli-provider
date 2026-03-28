@@ -56,8 +56,30 @@ export const INJECT_RESULT_CASE = `} else if (outcomeString === "inject_result")
   };
   
   this.completedToolCalls.push(completedToolCall);
+
+  // Publish TOOL_CONFIRMATION_RESPONSE to message bus so the scheduler's
+  // resolveConfirmation() wait is satisfied. Without this, the scheduler's
+  // _startBatch never completes and all future tool calls are enqueued forever.
+  const _correlationId = this.pendingCorrelationIds ? this.pendingCorrelationIds.get(callId) : undefined;
+  if (_correlationId) {
+    const _loopContext = this.config;
+    try {
+      _loopContext.messageBus.publish({
+        type: MessageBusType.TOOL_CONFIRMATION_RESPONSE,
+        correlationId: _correlationId,
+        confirmed: true,
+        outcome: ToolConfirmationOutcome.ProceedOnce,
+      });
+      logger.info('[Task] inject_result published TOOL_CONFIRMATION_RESPONSE for callId: ' + callId + ' correlationId: ' + _correlationId);
+    } catch (e) {
+      logger.warn('[Task] inject_result failed to publish confirmation response: ' + e);
+    }
+  } else {
+    logger.warn('[Task] inject_result no correlationId found for callId: ' + callId);
+  }
+
   this._resolveToolCall(callId);
-  
+
   // Cleanup pending state
   if (this.pendingToolConfirmationDetails) {
     this.pendingToolConfirmationDetails.delete(callId);
@@ -68,7 +90,7 @@ export const INJECT_RESULT_CASE = `} else if (outcomeString === "inject_result")
   if (this.toolsAlreadyConfirmed) {
     this.toolsAlreadyConfirmed.add(callId);
   }
-  
+
   logger.info('[Task] Injected result for callId: ' + callId);
   return true;
 }`;

@@ -81,7 +81,6 @@ export async function* parseSSEStream(
   // hung connections.
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const resetIdleTimeout = (): void => {
-    if (signal) return; // caller manages lifetime via signal
     if (timeoutId) clearTimeout(timeoutId);
     timeoutId = setTimeout(() => {
       if (!done) {

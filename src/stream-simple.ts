@@ -8,7 +8,7 @@
  */
 
 import type { Context } from './pi-types.js';
-import { sendMessageStream, injectResult, approveToolCall } from './a2a-client.js';
+import { sendMessageStream, injectResult, approveToolCall, resubscribeTask } from './a2a-client.js';
 import { parseSSEStream } from './sse-parser.js';
 import {
   createTask,
@@ -588,7 +588,7 @@ async function handleReCall(
 
   for (const item of workItems) {
     try {
-      const { sseStream } = await injectResult({
+      await injectResult({
         taskId,
         callId: item.callId,
         toolName: item.toolName,
@@ -598,36 +598,80 @@ async function handleReCall(
       });
       injectedCallIds.push(item.callId);
 
+      // Don't read the inject SSE response — it never delivers tool-call-update
+      // events (secondary executor path closes before scheduler emits them).
+      // Instead, immediately resubscribe to get ALL events via the event bus.
       const _fs = await import('node:fs');
-      let _evtCount = 0;
-      for await (const event of parseSSEStream(sseStream, { signal })) {
-        _evtCount++;
-        _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] re-call inject evt #${_evtCount}: kind=${event.kind} state=${event.result?.status?.state} final=${event.result?.final}\n`);
-        updateTaskState(taskId, event);
-        const nextPartial = updatePartialMessage(partialMessage, event);
-        copyPartialMessage(partialMessage, nextPartial);
-        emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([event]), createMessageMetadata(model));
+      _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] inject sent, resubscribing to taskId=${taskId}\n`);
 
-        // Check if the model called a new MCP tool during the inject response.
-        // If so, break out to return toolUse to GSD for execution.
-        const injectState = getTaskState(taskId);
-        const allPending = getPendingToolCalls(taskId);
-        const newPending = allPending.filter((tc) => !injectedCallIds.includes(tc.callId));
-        _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] re-call state: awaiting=${injectState?.awaitingApproval} terminal=${injectState?.isTerminal} allPending=${allPending.length} newPending=${newPending.length} names=${newPending.map(t=>t.name).join(',')}\n`);
-        if (injectState?.awaitingApproval) {
-          const hasNewMcpCalls = newPending.some((tc) => isMcpTool(tc.name));
-          if (hasNewMcpCalls) {
-            _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] re-call BREAK: new MCP tool detected\n`);
+      const { sseStream: resubStream } = await resubscribeTask({ taskId, signal });
+      let _evtCount = 0;
+      for await (const event of parseSSEStream(resubStream, { signal, idleTimeoutMs: 2000 })) {
+        _evtCount++;
+        _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub evt #${_evtCount}: kind=${event.kind} state=${event.result?.status?.state} final=${event.result?.final} awaiting=${event.isAwaitingApproval} toolCall=${event.toolCall?.callId ?? 'none'}\n`);
+        updateTaskState(taskId, event);
+
+        // Skip already-injected tool calls — don't re-emit or re-process them
+        const isOldToolCall = event.toolCall && injectedCallIds.includes(event.toolCall.callId);
+        if (!isOldToolCall) {
+          const nextPartial = updatePartialMessage(partialMessage, event);
+          copyPartialMessage(partialMessage, nextPartial);
+          emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([event]), createMessageMetadata(model));
+        }
+
+        // Check for NEW awaiting tool calls (from synthetic task snapshot events)
+        if (event.isAwaitingApproval && event.toolCall && !injectedCallIds.includes(event.toolCall.callId)) {
+          if (isMcpTool(event.toolCall.name)) {
+            _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub BREAK: new MCP tool ${event.toolCall.name}\n`);
             stopReason = 'toolUse';
             break;
           }
         }
-        if (injectState?.isTerminal) {
-          _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] re-call BREAK: terminal\n`);
+        // Also check via task state (for events that update awaitingApproval indirectly)
+        const resubState = getTaskState(taskId);
+        if (resubState?.awaitingApproval) {
+          const newPending = getPendingToolCalls(taskId).filter(
+            (tc) => !injectedCallIds.includes(tc.callId)
+          );
+          if (newPending.some((tc) => isMcpTool(tc.name))) {
+            _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub BREAK: new MCP tool (state) ${newPending.map(t=>t.name).join(',')}\n`);
+            stopReason = 'toolUse';
+            break;
+          }
+        }
+        if (resubState?.isTerminal) {
+          _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub BREAK: terminal\n`);
           break;
         }
       }
-      _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] re-call inject loop exited after ${_evtCount} events, stopReason=${stopReason}\n`);
+      _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub loop exited after ${_evtCount} events, stopReason=${stopReason}\n`);
+
+      // If no toolUse detected from live events, check the task snapshot
+      // one more time — the tool-call-update may have been registered after
+      // the resubscribe stream delivered events but before it closed.
+      if (!stopReason) {
+        try {
+          const { sseStream: checkStream } = await resubscribeTask({ taskId, signal });
+          for await (const checkEvt of parseSSEStream(checkStream, { signal, idleTimeoutMs: 2000 })) {
+            _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub-check evt: kind=${checkEvt.kind} awaiting=${checkEvt.isAwaitingApproval} toolCall=${checkEvt.toolCall?.callId ?? 'none'}\n`);
+            updateTaskState(taskId, checkEvt);
+            // Check for NEW tool calls not in injectedCallIds
+            if (checkEvt.isAwaitingApproval && checkEvt.toolCall && !injectedCallIds.includes(checkEvt.toolCall.callId)) {
+              if (isMcpTool(checkEvt.toolCall.name)) {
+                stopReason = 'toolUse';
+                // Add to partial message and emit to GSD
+                const nextP = updatePartialMessage(partialMessage, checkEvt);
+                copyPartialMessage(partialMessage, nextP);
+                emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([checkEvt]), createMessageMetadata(model));
+                _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub-check BREAK: new MCP tool ${checkEvt.toolCall.name}\n`);
+                break;
+              }
+            }
+          }
+          _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub-check done, stopReason=${stopReason}\n`);
+        } catch { /* ignore check failure */ }
+      }
+
       if (stopReason === 'toolUse') break;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Result injection failed';
@@ -648,14 +692,8 @@ async function handleReCall(
     }
   }
 
-  // If no stopReason and not terminal, the inject SSE stream ended while
-  // the executor is "Waiting for pending tools" — the model called a new tool
-  // but tool-call-update/confirmation events are never emitted in the inject
-  // flow (scheduler doesn't fire onToolCallsUpdate for inject executor runs).
-  // The only way the inject stream ends without terminal is if a new tool was called.
-  if (!stopReason && !updatedState?.isTerminal) {
-    stopReason = 'toolUse';
-  }
+  // No separate resubscribe fallback needed — resubscribe is the primary
+  // event source after each inject (see inject loop above).
 
   const finalMessage = {
     text: partialMessage.text,

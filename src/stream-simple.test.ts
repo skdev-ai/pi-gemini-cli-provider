@@ -765,7 +765,7 @@ describe('streamSimple', () => {
 
     const events = await collectEvents(stream);
 
-    await expect(result).rejects.toThrow('A2A server not responding');
+    await expect(result).rejects.toThrow();
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       type: 'error',

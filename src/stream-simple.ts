@@ -598,7 +598,11 @@ async function handleReCall(
       });
       injectedCallIds.push(item.callId);
 
+      const _fs = await import('node:fs');
+      let _evtCount = 0;
       for await (const event of parseSSEStream(sseStream, { signal })) {
+        _evtCount++;
+        _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] re-call inject evt #${_evtCount}: kind=${event.kind} state=${event.result?.status?.state} final=${event.result?.final}\n`);
         updateTaskState(taskId, event);
         const nextPartial = updatePartialMessage(partialMessage, event);
         copyPartialMessage(partialMessage, nextPartial);
@@ -607,20 +611,23 @@ async function handleReCall(
         // Check if the model called a new MCP tool during the inject response.
         // If so, break out to return toolUse to GSD for execution.
         const injectState = getTaskState(taskId);
+        const allPending = getPendingToolCalls(taskId);
+        const newPending = allPending.filter((tc) => !injectedCallIds.includes(tc.callId));
+        _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] re-call state: awaiting=${injectState?.awaitingApproval} terminal=${injectState?.isTerminal} allPending=${allPending.length} newPending=${newPending.length} names=${newPending.map(t=>t.name).join(',')}\n`);
         if (injectState?.awaitingApproval) {
-          const newPending = getPendingToolCalls(taskId).filter(
-            (tc) => !injectedCallIds.includes(tc.callId)
-          );
           const hasNewMcpCalls = newPending.some((tc) => isMcpTool(tc.name));
           if (hasNewMcpCalls) {
+            _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] re-call BREAK: new MCP tool detected\n`);
             stopReason = 'toolUse';
             break;
           }
         }
         if (injectState?.isTerminal) {
+          _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] re-call BREAK: terminal\n`);
           break;
         }
       }
+      _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] re-call inject loop exited after ${_evtCount} events, stopReason=${stopReason}\n`);
       if (stopReason === 'toolUse') break;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Result injection failed';

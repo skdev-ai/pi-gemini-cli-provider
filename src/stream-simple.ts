@@ -25,6 +25,7 @@ import {
   buildReinjectionWorkList,
   validateReinjectionCompleteness,
   isNativeTool,
+  isMcpTool,
 } from './approval-flow.js';
 import {
   createPartialMessage,
@@ -602,7 +603,25 @@ async function handleReCall(
         const nextPartial = updatePartialMessage(partialMessage, event);
         copyPartialMessage(partialMessage, nextPartial);
         emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([event]), createMessageMetadata(model));
+
+        // Check if the model called a new MCP tool during the inject response.
+        // If so, break out to return toolUse to GSD for execution.
+        const injectState = getTaskState(taskId);
+        if (injectState?.awaitingApproval) {
+          const newPending = getPendingToolCalls(taskId).filter(
+            (tc) => !injectedCallIds.includes(tc.callId)
+          );
+          const hasNewMcpCalls = newPending.some((tc) => isMcpTool(tc.name));
+          if (hasNewMcpCalls) {
+            stopReason = 'toolUse';
+            break;
+          }
+        }
+        if (injectState?.isTerminal) {
+          break;
+        }
       }
+      if (stopReason === 'toolUse') break;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Result injection failed';
       markTaskFailed(taskId, errorMessage);

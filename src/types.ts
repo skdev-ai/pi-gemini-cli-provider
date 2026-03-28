@@ -421,6 +421,8 @@ export interface A2AInjectResultRequest {
       }>;
       /** Message ID for tracking */
       messageId: string;
+      /** Task ID for existing task lookup (DefaultRequestHandler uses incomingMessage.taskId) */
+      taskId?: string;
     };
   };
 }

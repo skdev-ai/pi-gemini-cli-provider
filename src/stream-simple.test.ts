@@ -477,21 +477,31 @@ describe('streamSimple', () => {
         yield createStateChangeEvent('input-required', true, true);
       });
 
-    mockGetTaskState.mockReturnValue({
-      taskId: mockTaskId,
-      contextId: mockContextId,
-      state: 'input-required',
-      awaitingApproval: true,
-      pendingToolCalls: [
-        {
-          callId: 'call_3',
-          name: 'mcp_tools_write',
-          args: { path: 'out.txt' },
-          status: 'scheduled',
-        },
-      ],
-      isTerminal: false,
-    });
+    // First inject: no new tools yet. Second inject: call_3 appears.
+    mockGetTaskState
+      .mockReturnValueOnce({
+        taskId: mockTaskId,
+        contextId: mockContextId,
+        state: 'working',
+        awaitingApproval: false,
+        pendingToolCalls: [],
+        isTerminal: false,
+      })
+      .mockReturnValue({
+        taskId: mockTaskId,
+        contextId: mockContextId,
+        state: 'input-required',
+        awaitingApproval: true,
+        pendingToolCalls: [
+          {
+            callId: 'call_3',
+            name: 'mcp_tools_write',
+            args: { path: 'out.txt' },
+            status: 'scheduled',
+          },
+        ],
+        isTerminal: false,
+      });
 
     const { stream, result } = streamSimple({
       prompt: '',

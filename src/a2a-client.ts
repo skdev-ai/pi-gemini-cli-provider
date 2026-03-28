@@ -393,67 +393,6 @@ export async function approveToolCall(
 }
 
 // ============================================================================
-// Task Resubscribe
-// ============================================================================
-
-/**
- * Resubscribes to a task's event stream to receive pending events.
- *
- * Used after inject_result when the inject SSE stream closes before
- * tool-call-update events arrive. The resubscribe stream connects to
- * the task's event bus and delivers any pending/new events.
- */
-export interface ResubscribeTaskParams {
-  taskId: string;
-  signal?: AbortSignal;
-}
-
-export interface ResubscribeTaskResult {
-  sseStream: ReadableStream<Uint8Array>;
-}
-
-export async function resubscribeTask(
-  params: ResubscribeTaskParams
-): Promise<ResubscribeTaskResult> {
-  const { taskId, signal } = params;
-  const url = `http://localhost:${DEFAULT_A2A_PORT}/`;
-  const requestId = generateRequestId();
-
-  const requestBody = {
-    id: requestId,
-    jsonrpc: '2.0' as const,
-    method: 'tasks/resubscribe',
-    params: {
-      id: taskId,
-    },
-  };
-
-  try {
-    const response = await fetchWithTimeouts(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
-      },
-      body: JSON.stringify(requestBody),
-      signal,
-    });
-
-    if (!response.ok) {
-      throw createTransportError('HTTP_ERROR', `Resubscribe failed: ${response.status} ${response.statusText}`);
-    }
-
-    if (!response.body) {
-      throw createTransportError('PARSE_ERROR', 'Resubscribe response has no body');
-    }
-
-    return { sseStream: response.body };
-  } catch (error) {
-    throw mapFetchErrorToTransportError(error, url);
-  }
-}
-
-// ============================================================================
 // Fetch with Timeout Handling
 // ============================================================================
 

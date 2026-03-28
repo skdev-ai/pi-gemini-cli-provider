@@ -30,9 +30,9 @@ const RESPONSE_TIMEOUT_MS = 45000;
  */
 export async function* parseSSEStream(
   stream: ReadableStream<Uint8Array>,
-  options?: { signal?: AbortSignal; idleTimeoutMs?: number }
+  options?: { signal?: AbortSignal }
 ): AsyncIterable<ParsedA2AEvent> {
-  const { signal, idleTimeoutMs } = options ?? {};
+  const { signal } = options ?? {};
 
   const decoder = new TextDecoder();
   const eventQueue: ParsedA2AEvent[] = [];
@@ -50,7 +50,7 @@ export async function* parseSSEStream(
   const parser = createParser({
     onEvent: (event: EventSourceMessage) => {
       if (!event.data) return;
-      
+
       try {
         const parsed = JSON.parse(event.data) as Record<string, any>;
         const result = parsed.result;
@@ -67,37 +67,6 @@ export async function* parseSSEStream(
           resetIdleTimeout();
           eventQueue.push(parsedEvent);
           notify();
-        } else if (result.kind === 'task' && Array.isArray(result.history)) {
-          // Extract pending tool calls from resubscribe task snapshot.
-          // The task event doesn't have metadata.coderAgent.kind so parseA2AResult
-          // skips it, but it contains the full history with tool call status.
-          for (const entry of result.history) {
-            if (entry?.parts) {
-              for (const part of entry.parts) {
-                const toolStatus = part?.data?.status;
-                const isPending = toolStatus === 'awaiting_approval' || toolStatus === 'validating' || toolStatus === 'scheduled';
-                if (part?.kind === 'data' && isPending && part.data?.request?.callId) {
-                  const toolCall: ToolCallMetadata = {
-                    callId: part.data.request.callId,
-                    name: part.data.request.name,
-                    args: part.data.request.args,
-                    status: 'validating',
-                  };
-                  const syntheticEvent: ParsedA2AEvent = {
-                    kind: 'tool-call-update',
-                    result: result as any,
-                    toolCall,
-                    isAwaitingApproval: true,
-                  };
-                  if (sTaskId) syntheticEvent.serverTaskId = sTaskId;
-                  if (sContextId) syntheticEvent.serverContextId = sContextId;
-                  resetIdleTimeout();
-                  eventQueue.push(syntheticEvent);
-                  notify();
-                }
-              }
-            }
-          }
         }
       } catch (err) {
         parseError = err instanceof Error ? err : new Error(String(err));
@@ -107,44 +76,26 @@ export async function* parseSSEStream(
     },
   });
 
-  // Idle timeout — resets every time data arrives on the stream.
-  // This keeps the connection alive during long operations (e.g., web search
-  // + model processing after proceed_once approval) while still detecting
-  // hung connections.
+  // Idle timeout — resets on each parsed event. Detects hung connections
+  // while keeping long operations (web search, model processing) alive.
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  // Internal abort controller — used to unblock reader.read() on idle timeout
-  // without closing the HTTP connection (reader.cancel() kills the server).
-  const idleAbort = new AbortController();
   const resetIdleTimeout = (): void => {
     if (timeoutId) clearTimeout(timeoutId);
-    const effectiveTimeout = idleTimeoutMs ?? RESPONSE_TIMEOUT_MS;
     timeoutId = setTimeout(() => {
       if (!done) {
         done = true;
-        idleAbort.abort();
         notify();
       }
-    }, effectiveTimeout);
+    }, RESPONSE_TIMEOUT_MS);
   };
   resetIdleTimeout();
 
   const reader = stream.getReader();
   const readerPromise = (async () => {
     try {
-      while (!done && !signal?.aborted && !idleAbort.signal.aborted) {
-        // Race reader.read() against idle abort to unblock without closing the connection
-        const readResult = await Promise.race([
-          reader.read(),
-          new Promise<{ value: undefined; done: true }>((resolve) => {
-            if (idleAbort.signal.aborted) { resolve({ value: undefined, done: true }); return; }
-            idleAbort.signal.addEventListener('abort', () => resolve({ value: undefined, done: true }), { once: true });
-          }),
-        ]);
-        const { value, done: streamDone } = readResult;
-        // Reset idle timeout on raw chunks only for the default (long) timeout.
-        // Short timeouts (inject flow) only reset on parsed events to detect
-        // when the SSE stream stops delivering events.
-        if (!streamDone && value && !idleTimeoutMs) resetIdleTimeout();
+      while (!done && !signal?.aborted) {
+        const { value, done: streamDone } = await reader.read();
+        if (!streamDone && value) resetIdleTimeout();
 
         if (streamDone) {
           done = true;
@@ -167,11 +118,7 @@ export async function* parseSSEStream(
     } finally {
       parser.feed(decoder.decode());
       if (timeoutId) clearTimeout(timeoutId);
-      // Don't cancel/releaseLock if idle abort fired — cancel() closes the HTTP
-      // connection which crashes the A2A server. Let the reader get GC'd.
-      if (!idleAbort.signal.aborted) {
-        reader.releaseLock();
-      }
+      reader.releaseLock();
       done = true;
       notify();
     }

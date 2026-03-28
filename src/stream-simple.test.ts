@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { streamSimple, streamSimpleGsd, type AssistantMessageEvent } from './stream-simple.js';
-import { sendMessageStream, injectResult, approveToolCall, resubscribeTask } from './a2a-client.js';
+import { sendMessageStream, injectResult, approveToolCall } from './a2a-client.js';
 import { parseSSEStream } from './sse-parser.js';
 import {
   getTaskState,
@@ -29,7 +29,6 @@ vi.mock('./a2a-lifecycle.js');
 const mockSendMessageStream = vi.mocked(sendMessageStream);
 const mockInjectResult = vi.mocked(injectResult);
 const mockApproveToolCall = vi.mocked(approveToolCall);
-const mockResubscribeTask = vi.mocked(resubscribeTask);
 const mockParseSSEStream = vi.mocked(parseSSEStream);
 const mockCreateTask = vi.mocked(createTask);
 const mockGetTaskState = vi.mocked(getTaskState);
@@ -131,8 +130,6 @@ describe('streamSimple', () => {
     vi.resetAllMocks();
     mockClearAllTasks();
     mockIncrementProviderTaskCount.mockResolvedValue();
-    // Default resubscribe mock — returns empty stream
-    mockResubscribeTask.mockResolvedValue({ sseStream: new ReadableStream() });
   });
 
   it('returns an async iterable stream and emits contract-shaped text events', async () => {
@@ -471,11 +468,6 @@ describe('streamSimple', () => {
         metadata: { url: 'http://localhost:41242/', requestId: 'req_inject_2' },
       });
 
-    mockResubscribeTask
-      .mockResolvedValueOnce({ sseStream: new ReadableStream() })
-      .mockResolvedValueOnce({ sseStream: new ReadableStream() })
-      .mockResolvedValueOnce({ sseStream: new ReadableStream() })
-      .mockResolvedValueOnce({ sseStream: new ReadableStream() });
 
     // parseSSEStream is called for resubscribe streams.
     // Resub 1: text only (live events). Resub-check 1: tool detected from snapshot.
@@ -592,7 +584,6 @@ describe('streamSimple', () => {
       metadata: { url: 'http://localhost:41242/', requestId: 'req_inject_err' },
     });
 
-    mockResubscribeTask.mockResolvedValue({ sseStream: new ReadableStream() });
 
     mockParseSSEStream.mockImplementation(async function* () {
       yield createStateChangeEvent('completed', false, true);
@@ -657,7 +648,6 @@ describe('streamSimple', () => {
       metadata: { url: 'http://localhost:41242/', requestId: 'req_direct_recall' },
     });
 
-    mockResubscribeTask.mockResolvedValue({ sseStream: new ReadableStream() });
 
     mockParseSSEStream.mockImplementation(async function* () {
       yield createStateChangeEvent('completed', false, true);
@@ -940,8 +930,6 @@ describe('streamSimpleGsd', () => {
     vi.resetAllMocks();
     mockClearAllTasks();
     mockIncrementProviderTaskCount.mockResolvedValue();
-    // Default resubscribe mock — returns empty stream
-    mockResubscribeTask.mockResolvedValue({ sseStream: new ReadableStream() });
   });
 
   it('extracts text from block-array user content', async () => {

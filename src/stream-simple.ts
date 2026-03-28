@@ -430,7 +430,7 @@ async function handleFreshPrompt(
 
   const taskState = taskId && contextId ? createTaskWithIds(taskId, contextId) : createTask();
 
-  const { taskId: a2aTaskId, contextId: a2aContextId, sseStream, metadata: a2aMetadata } = await sendMessageStream({
+  const { taskId: a2aTaskId, contextId: a2aContextId, sseStream } = await sendMessageStream({
     prompt,
     taskId: taskState.taskId,
     contextId: taskState.contextId,
@@ -481,20 +481,14 @@ async function handleFreshPrompt(
         if (hasNativeCalls && !hasMcpCalls) {
           for (const toolCall of pendingToolCalls) {
             try {
-              const fs = await import('node:fs');
-              fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] APPROVE: a2aMetadata.requestId=${a2aMetadata.requestId} serverTaskId=${serverTaskId} a2aTaskId=${a2aTaskId}\n`);
               const { sseStream: approveStream } = await approveToolCall({
-                // Use server's real task UUID — the InMemoryTaskStore is keyed by this
                 taskId: serverTaskId ?? a2aTaskId,
                 callId: toolCall.callId,
                 outcome: 'proceed_once',
                 signal,
               });
 
-              let approveEventCount = 0;
               for await (const approveEvent of parseSSEStream(approveStream, { signal })) {
-                approveEventCount++;
-                fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] approve-event #${approveEventCount}: kind=${approveEvent.kind} state=${approveEvent.result?.status?.state} final=${approveEvent.result?.final} text=${(approveEvent.text ?? '').slice(0, 80)}\n`);
                 updateTaskState(effectiveTaskId, approveEvent);
                 const approvePartial = updatePartialMessage(partialMessage, approveEvent);
                 copyPartialMessage(partialMessage, approvePartial);
@@ -502,11 +496,9 @@ async function handleFreshPrompt(
 
                 const approvedState = getTaskState(effectiveTaskId);
                 if (approvedState?.isTerminal) {
-                  fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] approve-loop: TERMINAL after ${approveEventCount} events\n`);
                   break;
                 }
               }
-              fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] approve-loop: exited after ${approveEventCount} events, text=${partialMessage.text.length}chars\n`);
             } catch (error) {
               const errorMessage = error instanceof Error ? error.message : 'Auto-approval failed';
               markTaskFailed(effectiveTaskId, errorMessage);
@@ -588,11 +580,6 @@ async function handleReCall(
 
   for (const item of workItems) {
     try {
-      const _fs = await import('node:fs');
-
-      // With Patch 5, the inject SSE response stays open until the primary
-      // execution reaches a decision point (final:true). Read events directly
-      // from the inject response — no resubscribe needed.
       const { sseStream: injectStream } = await injectResult({
         taskId,
         callId: item.callId,
@@ -602,47 +589,27 @@ async function handleReCall(
         signal,
       });
       injectedCallIds.push(item.callId);
-      _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] inject sent for ${item.callId}, reading SSE response\n`);
-      let _evtCount = 0;
+
       for await (const event of parseSSEStream(injectStream, { signal })) {
-        _evtCount++;
-        _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub evt #${_evtCount}: kind=${event.kind} state=${event.result?.status?.state} final=${event.result?.final} awaiting=${event.isAwaitingApproval} toolCall=${event.toolCall?.callId ?? 'none'}\n`);
         updateTaskState(taskId, event);
+        const nextPartial = updatePartialMessage(partialMessage, event);
+        copyPartialMessage(partialMessage, nextPartial);
+        emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([event]), createMessageMetadata(model));
 
-        // Skip already-injected tool calls — don't re-emit or re-process them
-        const isOldToolCall = event.toolCall && injectedCallIds.includes(event.toolCall.callId);
-        if (!isOldToolCall) {
-          const nextPartial = updatePartialMessage(partialMessage, event);
-          copyPartialMessage(partialMessage, nextPartial);
-          emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([event]), createMessageMetadata(model));
-        }
-
-        // Check for NEW awaiting tool calls (from synthetic task snapshot events)
-        if (event.isAwaitingApproval && event.toolCall && !injectedCallIds.includes(event.toolCall.callId)) {
-          if (isMcpTool(event.toolCall.name)) {
-            _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub BREAK: new MCP tool ${event.toolCall.name}\n`);
-            stopReason = 'toolUse';
-            break;
-          }
-        }
-        // Also check via task state (for events that update awaitingApproval indirectly)
-        const resubState = getTaskState(taskId);
-        if (resubState?.awaitingApproval) {
+        const injectState = getTaskState(taskId);
+        if (injectState?.awaitingApproval) {
           const newPending = getPendingToolCalls(taskId).filter(
             (tc) => !injectedCallIds.includes(tc.callId)
           );
           if (newPending.some((tc) => isMcpTool(tc.name))) {
-            _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub BREAK: new MCP tool (state) ${newPending.map(t=>t.name).join(',')}\n`);
             stopReason = 'toolUse';
             break;
           }
         }
-        if (resubState?.isTerminal) {
-          _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] resub BREAK: terminal\n`);
+        if (injectState?.isTerminal) {
           break;
         }
       }
-      _fs.appendFileSync('/tmp/gemini-debug.log', `[${new Date().toISOString()}] inject loop exited after ${_evtCount} events, stopReason=${stopReason}\n`);
       if (stopReason === 'toolUse') break;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Result injection failed';
@@ -662,9 +629,6 @@ async function handleReCall(
       stopReason = 'toolUse';
     }
   }
-
-  // No separate resubscribe fallback needed — resubscribe is the primary
-  // event source after each inject (see inject loop above).
 
   const finalMessage = {
     text: partialMessage.text,

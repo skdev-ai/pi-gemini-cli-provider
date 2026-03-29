@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getA2APath, getA2APackageRoot } from './a2a-path.js';
@@ -320,6 +320,9 @@ function applyPatches(ctx: InstallerContext): void {
       writeFileSync(a2aPath, contentWithPatch3.replace(patch4Target, patch4Replacement), 'utf-8');
     }
     
+    // Restore execute permission — writeFileSync creates files as 644
+    chmodSync(a2aPath, 0o755);
+
     ctx.ui.notify('Patches applied, verifying...');
   } catch (error: any) {
     // Restore from backup on failure

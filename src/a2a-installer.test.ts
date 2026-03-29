@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { installA2AServer, type InstallerContext } from './a2a-installer.js';
 import { getA2APath, getA2APackageRoot } from './a2a-path.js';
@@ -27,6 +27,7 @@ vi.mock('node:fs', () => ({
   existsSync: vi.fn(),
   readFileSync: vi.fn(),
   writeFileSync: vi.fn(),
+  chmodSync: vi.fn(),
   rmSync: vi.fn(),
   mkdirSync: vi.fn(),
 }));

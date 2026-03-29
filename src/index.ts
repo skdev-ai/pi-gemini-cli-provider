@@ -216,8 +216,4 @@ export default async function(pi: ExtensionAPI) {
     }
   });
   
-  // TODO: Implement A2A server startup after spikes validate architecture
-  // Spike 1: MCP tool discovery via A2A workspace
-  // Spike 2: MCP tool execution callback to GSD
-  // Spike 3: A2A SSE → GSD AssistantMessageEventStream
 }

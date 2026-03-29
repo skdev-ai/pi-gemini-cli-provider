@@ -437,7 +437,7 @@ describe('streamSimple', () => {
     });
   });
 
-  it.skip('re-call injects all available results before surfacing the next toolUse stop', async () => {
+  it('re-call injects all available results before surfacing the next toolUse stop', async () => {
     const mockTaskId = 'task_multi';
     const mockContextId = 'ctx_multi';
 
@@ -468,28 +468,19 @@ describe('streamSimple', () => {
         metadata: { url: 'http://localhost:41242/', requestId: 'req_inject_2' },
       });
 
-
-    // parseSSEStream is called for resubscribe streams.
-    // Resub 1: text only (live events). Resub-check 1: tool detected from snapshot.
-    // Resub 2: new tool call from snapshot. Resub-check 2: completes.
+    // parseSSEStream is called for each inject's SSE response.
+    // First inject: text events only (model processes first result).
+    // Second inject: model calls a new tool (call_3).
     mockParseSSEStream
       .mockImplementationOnce(async function* () {
         yield createTextEvent('First result received');
       })
       .mockImplementationOnce(async function* () {
-        // resub-check after first inject — finds new tool awaiting approval
-        yield createToolCallEvent('call_3', 'mcp_tools_write', { path: 'out.txt' });
-      })
-      .mockImplementationOnce(async function* () {
-        // resub for second inject — delivers tool confirmation events
         yield createToolCallEvent('call_3', 'mcp_tools_write', { path: 'out.txt' });
         yield createStateChangeEvent('input-required', true, true);
-      })
-      .mockImplementation(async function* () {
-        // any further resub-checks — empty
       });
 
-    // First resubscribe: no new tools yet. Second resubscribe: call_3 appears.
+    // First inject SSE: no new tools. Second inject SSE: call_3 appears.
     mockGetTaskState
       .mockReturnValueOnce({
         taskId: mockTaskId,

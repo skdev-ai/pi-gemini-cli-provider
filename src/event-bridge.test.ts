@@ -816,7 +816,7 @@ describe('unified rendering', () => {
     expect(partial.toolCalls).toHaveLength(2);
     expect(partial.toolCalls[0].name).toBe('read');
     expect(partial.toolCalls[1].name).toBe('native_web_fetch');
-    // Response output stored in nativeToolText
-    expect(partial.nativeToolText).toContain('Result text');
+    // Response output inside native tool's arguments
+    expect(partial.toolCalls[1].arguments.result).toBe('Result text');
   });
 });

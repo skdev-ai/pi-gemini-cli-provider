@@ -74,20 +74,23 @@ export function updatePartialMessage(
       const { callId, name, args, status, responseOutput } = event.toolCall;
 
       if (isNativeTool(name)) {
-        // Native tools: add to toolCalls with native_ prefix and formatted args
-        // so GSD renders them as grey tool blocks during streaming.
-        // They are filtered from the FINAL message to prevent execution.
-        const formattedArgs: Record<string, any> = {};
+        // Native tools: add to toolCalls with native_ prefix so GSD renders
+        // them as grey tool blocks. Filtered from FINAL message to prevent execution.
+        // Include response output (sources) in arguments so it renders inside the block.
+        const displayArgs: Record<string, any> = {};
         if (args && typeof args === 'object') {
           for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
-            formattedArgs[k] = v;
+            displayArgs[k] = v;
           }
+        }
+        if (status === 'success' && responseOutput) {
+          displayArgs['result'] = responseOutput;
         }
 
         const piToolCall: PiToolCallContent = {
           id: callId,
           name: 'native_' + name,
-          arguments: formattedArgs,
+          arguments: displayArgs,
         };
 
         const newToolCalls = [...partial.toolCalls];
@@ -98,16 +101,9 @@ export function updatePartialMessage(
           newToolCalls.push(piToolCall);
         }
 
-        // Store response output (search results/sources) when tool completes
-        let nativeToolText = partial.nativeToolText;
-        if (status === 'success' && responseOutput) {
-          nativeToolText = (nativeToolText ? nativeToolText + '\n' : '') + responseOutput;
-        }
-
         return {
           ...partial,
           toolCalls: newToolCalls,
-          nativeToolText,
         };
       }
 

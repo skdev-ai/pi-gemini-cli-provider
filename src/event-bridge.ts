@@ -94,15 +94,14 @@ export function updatePartialMessage(
         // Handle native tool formatting as text blocks
         const blocks = { ...(partial.nativeToolBlocks ?? {}) };
         
-        // Start block with name and args
-        let blockText = `\`\`\` native_${name}\n${formatArgs(args)}\n`;
-        
-        // Append response output if available and success
+        // Format as plain fenced code block (no language identifier = grey block in GSD)
+        // Tool name as first line, args below, response output when available
+        let blockText = '```\nnative_' + name + '\n' + formatArgs(args) + '\n';
+
         if (status === 'success' && responseOutput) {
-          blockText += `${responseOutput}\n`;
+          blockText += '\n' + responseOutput + '\n';
         }
-        
-        // Close block
+
         blockText += '```\n';
         
         blocks[callId] = blockText;

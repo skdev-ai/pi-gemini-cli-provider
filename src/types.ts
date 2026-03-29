@@ -191,8 +191,8 @@ export interface A2AMessagePart {
     request?: { callId: string; name: string; args: unknown };
     /** Tool execution status (sibling to request, not nested) */
     status?: 'validating' | 'scheduled' | 'executing' | 'success';
-    /** Tool response output (present when status === 'success') */
-    response?: { output: string };
+    /** Tool response (present when status === 'success', structure varies) */
+    response?: Record<string, any>;
   };
 }
 

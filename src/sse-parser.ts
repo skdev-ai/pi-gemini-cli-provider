@@ -262,12 +262,29 @@ export function extractToolCall(result: A2AResult): ToolCallMetadata | null {
       const { request, status, response } = part.data;
       if (!status) continue; // Skip if no status (incomplete event)
       
+      // Extract response output from the tool result.
+      // The A2A server structures the response as:
+      //   response.responseParts[].functionResponse.response.output (full output)
+      //   response.resultDisplay (short summary)
+      let responseOutput: string | undefined;
+      if (response) {
+        const rParts = response.responseParts ?? response.parts;
+        if (Array.isArray(rParts)) {
+          for (const rp of rParts) {
+            const out = rp?.functionResponse?.response?.output;
+            if (typeof out === 'string') { responseOutput = out; break; }
+          }
+        }
+        if (!responseOutput && typeof response.resultDisplay === 'string') responseOutput = response.resultDisplay;
+        if (!responseOutput && typeof response.output === 'string') responseOutput = response.output;
+      }
+
       return {
         callId: request.callId,
         name: request.name,
         args: request.args,
         status: status as ToolCallMetadata['status'],
-        responseOutput: response?.output,
+        responseOutput,
       };
     }
   }

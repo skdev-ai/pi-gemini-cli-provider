@@ -191,6 +191,8 @@ export interface A2AMessagePart {
     request?: { callId: string; name: string; args: unknown };
     /** Tool execution status (sibling to request, not nested) */
     status?: 'validating' | 'scheduled' | 'executing' | 'success';
+    /** Tool response output (present when status === 'success') */
+    response?: { output: string };
   };
 }
 
@@ -320,6 +322,8 @@ export interface ToolCallMetadata {
   args: unknown;
   /** Current execution status */
   status: 'validating' | 'scheduled' | 'executing' | 'success';
+  /** Optional response output (present when status === 'success') */
+  responseOutput?: string;
 }
 
 /**
@@ -597,6 +601,10 @@ export interface PartialAssistantMessage {
   text: string;
   /** Accumulated thinking content */
   thinking: string;
+  /** Accumulated native tool call text blocks */
+  nativeToolText: string;
+  /** Internal storage for native tool blocks (not for GSD use) */
+  nativeToolBlocks?: Record<string, string>;
   /** Tool calls emitted so far */
   toolCalls: PiToolCallContent[];
 }

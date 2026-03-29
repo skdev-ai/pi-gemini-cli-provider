@@ -15,7 +15,24 @@ import type {
   PartialAssistantMessage,
   ToolCallMetadata,
 } from './types.js';
-import { stripMcpPrefix } from './approval-flow.js';
+import { stripMcpPrefix, isNativeTool } from './approval-flow.js';
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/**
+ * Formats tool arguments as key: value pairs per line, stripping JSON syntax.
+ */
+function formatArgs(args: unknown): string {
+  if (!args || typeof args !== 'object' || args === null) return '';
+  return Object.entries(args)
+    .map(([key, value]) => {
+      const val = typeof value === 'string' ? value : JSON.stringify(value);
+      return `${key}: ${val}`;
+    })
+    .join('\n');
+}
 
 // ============================================================================
 // Partial Message Accumulation
@@ -30,6 +47,8 @@ export function createPartialMessage(): PartialAssistantMessage {
   return {
     text: '',
     thinking: '',
+    nativeToolText: '',
+    nativeToolBlocks: {},
     toolCalls: [],
   };
 }
@@ -69,7 +88,38 @@ export function updatePartialMessage(
         return partial;
       }
       
-      // Convert A2A tool call to pi format
+      const { callId, name, args, status, responseOutput } = event.toolCall;
+      
+      if (isNativeTool(name)) {
+        // Handle native tool formatting as text blocks
+        const blocks = { ...(partial.nativeToolBlocks ?? {}) };
+        
+        // Start block with name and args
+        let blockText = `\`\`\` native_${name}\n${formatArgs(args)}\n`;
+        
+        // Append response output if available and success
+        if (status === 'success' && responseOutput) {
+          blockText += `${responseOutput}\n`;
+        }
+        
+        // Close block
+        blockText += '```\n';
+        
+        blocks[callId] = blockText;
+        
+        // Join all blocks to compute nativeToolText.
+        // Maintain insertion order by sorting by callId if necessary, 
+        // but for now simple join is fine.
+        const nativeToolText = Object.values(blocks).join('\n');
+        
+        return {
+          ...partial,
+          nativeToolBlocks: blocks,
+          nativeToolText,
+        };
+      }
+      
+      // Convert A2A tool call to pi format (MCP tools only)
       const piToolCall = convertToolCallToPi(event.toolCall);
       
       // Check if tool call already exists (update) or is new (add)

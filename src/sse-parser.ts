@@ -259,7 +259,7 @@ export function extractToolCall(result: A2AResult): ToolCallMetadata | null {
   
   for (const part of parts) {
     if (part.kind === 'data' && part.data?.request) {
-      const { request, status } = part.data;
+      const { request, status, response } = part.data;
       if (!status) continue; // Skip if no status (incomplete event)
       
       return {
@@ -267,6 +267,7 @@ export function extractToolCall(result: A2AResult): ToolCallMetadata | null {
         name: request.name,
         args: request.args,
         status: status as ToolCallMetadata['status'],
+        responseOutput: response?.output,
       };
     }
   }

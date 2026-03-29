@@ -232,6 +232,7 @@ export interface StreamSimpleResult {
   message: {
     text: string;
     thinking: string;
+    nativeToolText: string;
     toolCalls: Array<{ callId: string; name: string; args: unknown }>;
   };
 }
@@ -257,6 +258,8 @@ interface StreamEventState {
   textEmitted: string;
   thinkingIndex: number | null;
   thinkingEmitted: string;
+  nativeToolTextIndex: number | null;
+  nativeToolTextEmitted: string;
   toolCallIndices: Map<string, number>;
 }
 
@@ -523,6 +526,7 @@ async function handleFreshPrompt(
   const finalMessage = {
     text: partialMessage.text,
     thinking: partialMessage.thinking,
+    nativeToolText: partialMessage.nativeToolText,
     toolCalls: mcpToolCalls.map((call) => ({
       callId: call.id,
       name: call.name,
@@ -633,6 +637,7 @@ async function handleReCall(
   const finalMessage = {
     text: partialMessage.text,
     thinking: partialMessage.thinking,
+    nativeToolText: partialMessage.nativeToolText,
     toolCalls: partialMessage.toolCalls.map((call) => ({
       callId: call.id,
       name: call.name,
@@ -661,6 +666,8 @@ function createStreamEventState(): StreamEventState {
     textEmitted: '',
     thinkingIndex: null,
     thinkingEmitted: '',
+    nativeToolTextIndex: null,
+    nativeToolTextEmitted: '',
     toolCallIndices: new Map<string, number>(),
   };
 }
@@ -668,11 +675,17 @@ function createStreamEventState(): StreamEventState {
 function emitTranslatedEvents(
   stream: AssistantMessageEventStream,
   state: StreamEventState,
-  partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
+  partialMessage: { text: string; thinking: string; nativeToolText: string; toolCalls: PiToolCallContent[] },
   piEvents: Array<{ type: 'text' | 'thinking' | 'toolCall'; content: string | PiToolCallContent }>,
   metadata: MessageMetadata,
 ): void {
   ensureStartEvent(stream, state, partialMessage, metadata);
+
+  // Check for native tool text deltas
+  if (partialMessage.nativeToolText && partialMessage.nativeToolText.length > state.nativeToolTextEmitted.length) {
+    const delta = partialMessage.nativeToolText.slice(state.nativeToolTextEmitted.length);
+    emitNativeToolDelta(stream, state, partialMessage, delta, metadata);
+  }
 
   for (const piEvent of piEvents) {
     if (piEvent.type === 'text') {
@@ -681,8 +694,8 @@ function emitTranslatedEvents(
       emitThinkingDelta(stream, state, partialMessage, deltaToString(piEvent.content), metadata);
     } else if (piEvent.type === 'toolCall') {
       const tc = piEvent.content as PiToolCallContent;
-      // Don't emit native tool calls (google_web_search, web_fetch) to GSD —
-      // they are auto-approved and handled within A2A.
+      // Don't emit native tool calls (google_web_search, web_fetch) as toolUse content blocks —
+      // they are auto-approved within A2A and rendered as text blocks above.
       if (!isNativeTool(tc.name)) {
         emitToolCall(stream, state, partialMessage, tc, metadata);
       }
@@ -690,10 +703,37 @@ function emitTranslatedEvents(
   }
 }
 
+function emitNativeToolDelta(
+  stream: AssistantMessageEventStream,
+  state: StreamEventState,
+  partialMessage: { text: string; thinking: string; nativeToolText: string; toolCalls: PiToolCallContent[] },
+  delta: string,
+  metadata: MessageMetadata,
+): void {
+  ensureStartEvent(stream, state, partialMessage, metadata);
+
+  if (state.nativeToolTextIndex === null) {
+    state.nativeToolTextIndex = getOrCreateNativeToolTextIndex(partialMessage);
+    stream.push({
+      type: 'text_start',
+      contentIndex: state.nativeToolTextIndex,
+      partial: buildAssistantMessage(snapshotMessage(partialMessage), metadata, 'stop'),
+    });
+  }
+
+  state.nativeToolTextEmitted += delta;
+  stream.push({
+    type: 'text_delta',
+    contentIndex: state.nativeToolTextIndex,
+    delta,
+    partial: buildAssistantMessage(snapshotMessage(partialMessage), metadata, 'stop'),
+  });
+}
+
 function ensureStartEvent(
   stream: AssistantMessageEventStream,
   state: StreamEventState,
-  partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
+  partialMessage: { text: string; thinking: string; nativeToolText: string; toolCalls: PiToolCallContent[] },
   metadata: MessageMetadata,
 ): void {
   if (state.emittedStart) {
@@ -710,7 +750,7 @@ function ensureStartEvent(
 function emitTextDelta(
   stream: AssistantMessageEventStream,
   state: StreamEventState,
-  partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
+  partialMessage: { text: string; thinking: string; nativeToolText: string; toolCalls: PiToolCallContent[] },
   delta: string,
   metadata: MessageMetadata,
 ): void {
@@ -737,14 +777,14 @@ function emitTextDelta(
 function emitThinkingDelta(
   stream: AssistantMessageEventStream,
   state: StreamEventState,
-  partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
+  partialMessage: { text: string; thinking: string; nativeToolText: string; toolCalls: PiToolCallContent[] },
   delta: string,
   metadata: MessageMetadata,
 ): void {
   ensureStartEvent(stream, state, partialMessage, metadata);
 
   if (state.thinkingIndex === null) {
-    state.thinkingIndex = getOrCreateThinkingIndex(partialMessage);
+    state.thinkingIndex = getOrCreateThinkingIndex();
     stream.push({
       type: 'thinking_start',
       contentIndex: state.thinkingIndex,
@@ -764,7 +804,7 @@ function emitThinkingDelta(
 function emitToolCall(
   stream: AssistantMessageEventStream,
   state: StreamEventState,
-  partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
+  partialMessage: { text: string; thinking: string; nativeToolText: string; toolCalls: PiToolCallContent[] },
   toolCall: PiToolCallContent,
   metadata: MessageMetadata,
 ): void {
@@ -790,19 +830,30 @@ function emitToolCall(
 function finalizeOpenContent(
   stream: AssistantMessageEventStream,
   state: StreamEventState,
-  finalMessage: { text: string; thinking: string; toolCalls: Array<{ callId: string; name: string; args: unknown }> },
+  finalMessage: { text: string; thinking: string; nativeToolText: string; toolCalls: Array<{ callId: string; name: string; args: unknown }> },
   metadata: MessageMetadata,
 ): void {
   const finalAssistantMessage = buildAssistantMessage(finalMessage, metadata, 'stop');
   ensureStartEvent(stream, state, {
     text: finalMessage.text,
     thinking: finalMessage.thinking,
+    nativeToolText: finalMessage.nativeToolText,
     toolCalls: finalMessage.toolCalls.map((call) => ({
       id: call.callId,
       name: call.name,
       arguments: normalizeToolArguments(call.args),
     })),
   }, metadata);
+
+  if (state.nativeToolTextIndex !== null) {
+    stream.push({
+      type: 'text_end',
+      contentIndex: state.nativeToolTextIndex,
+      content: finalMessage.nativeToolText,
+      partial: finalAssistantMessage,
+    });
+    state.nativeToolTextIndex = null;
+  }
 
   if (state.textIndex !== null) {
     stream.push({
@@ -844,7 +895,7 @@ function emitError(
     type: 'error',
     reason,
     error: buildAssistantMessage(
-      { text: '', thinking: '', toolCalls: [] },
+      { text: '', thinking: '', nativeToolText: '', toolCalls: [] },
       metadata,
       reason,
       errorMessage,
@@ -852,25 +903,35 @@ function emitError(
   });
 }
 
-function getOrCreateTextIndex(partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] }): number {
-  const existingIndex = partialMessageToContent(partialMessage).findIndex((item) => item.type === 'text');
-  return existingIndex >= 0 ? existingIndex : partialMessageToContent(partialMessage).length;
+function getOrCreateNativeToolTextIndex(partialMessage: { thinking: string }): number {
+  return partialMessage.thinking.length > 0 ? 1 : 0;
 }
 
-function getOrCreateThinkingIndex(partialMessage: { text: string; thinking: string; toolCalls: PiToolCallContent[] }): number {
-  const existingIndex = partialMessageToContent(partialMessage).findIndex((item) => item.type === 'thinking');
-  return existingIndex >= 0 ? existingIndex : partialMessageToContent(partialMessage).length;
+function getOrCreateTextIndex(partialMessage: { thinking: string; nativeToolText?: string }): number {
+  let index = 0;
+  if (partialMessage.thinking.length > 0) index++;
+  if (partialMessage.nativeToolText && partialMessage.nativeToolText.length > 0) index++;
+  return index;
+}
+
+function getOrCreateThinkingIndex(): number {
+  return 0;
 }
 
 function partialMessageToContent(partialMessage: {
   text: string;
   thinking: string;
+  nativeToolText?: string;
   toolCalls: PiToolCallContent[];
 }): AssistantMessageContent[] {
   const content: AssistantMessageContent[] = [];
 
   if (partialMessage.thinking.length > 0) {
     content.push({ type: 'thinking', thinking: partialMessage.thinking });
+  }
+
+  if (partialMessage.nativeToolText && partialMessage.nativeToolText.length > 0) {
+    content.push({ type: 'text', text: partialMessage.nativeToolText });
   }
 
   if (partialMessage.text.length > 0) {
@@ -893,6 +954,7 @@ function buildAssistantMessage(
   message: {
     text: string;
     thinking: string;
+    nativeToolText: string;
     toolCalls: Array<{ callId: string; name: string; args: unknown }>;
   },
   metadata: MessageMetadata,
@@ -913,6 +975,7 @@ function buildAssistantMessage(
     content: partialMessageToContent({
       text: message.text,
       thinking: message.thinking,
+      nativeToolText: message.nativeToolText,
       toolCalls,
     }),
     usage: createZeroUsage(),
@@ -925,11 +988,13 @@ function buildAssistantMessage(
 function snapshotMessage(partialMessage: {
   text: string;
   thinking: string;
+  nativeToolText: string;
   toolCalls: PiToolCallContent[];
-}): { text: string; thinking: string; toolCalls: Array<{ callId: string; name: string; args: unknown }> } {
+}): { text: string; thinking: string; nativeToolText: string; toolCalls: Array<{ callId: string; name: string; args: unknown }> } {
   return {
     text: partialMessage.text,
     thinking: partialMessage.thinking,
+    nativeToolText: partialMessage.nativeToolText,
     toolCalls: partialMessage.toolCalls.map((call) => ({
       callId: call.id,
       name: call.name,
@@ -939,11 +1004,12 @@ function snapshotMessage(partialMessage: {
 }
 
 function copyPartialMessage(
-  target: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
-  next: { text: string; thinking: string; toolCalls: PiToolCallContent[] },
+  target: { text: string; thinking: string; nativeToolText: string; toolCalls: PiToolCallContent[] },
+  next: { text: string; thinking: string; nativeToolText: string; toolCalls: PiToolCallContent[] },
 ): void {
   target.text = next.text;
   target.thinking = next.thinking;
+  target.nativeToolText = next.nativeToolText;
   target.toolCalls = next.toolCalls;
 }
 

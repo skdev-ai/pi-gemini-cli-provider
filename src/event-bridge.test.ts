@@ -105,6 +105,8 @@ describe('createPartialMessage', () => {
 
     expect(partial.text).toBe('');
     expect(partial.thinking).toBe('');
+    expect(partial.nativeToolText).toBe('');
+    expect(partial.nativeToolBlocks).toEqual({});
     expect(partial.toolCalls).toEqual([]);
   });
 });
@@ -185,8 +187,8 @@ describe('updatePartialMessage', () => {
 
     const toolCall2: ToolCallMetadata = {
       callId: 'call_2',
-      name: 'google_web_search',
-      args: { query: 'test' },
+      name: 'mcp_tools_write',
+      args: { path: 'test.md', content: 'test' },
       status: 'success',
     };
 
@@ -554,45 +556,48 @@ describe('extractCompleteMessage', () => {
     const partial = {
       text: 'Hello World',
       thinking: 'Let me think...',
+      nativeToolText: '',
       toolCalls: [{ id: 'call_1', name: 'read', arguments: {} }],
     };
 
     const complete = extractCompleteMessage(partial);
 
-    expect(complete).toEqual(partial);
+    expect(complete.text).toBe('Hello World');
+    expect(complete.thinking).toBe('Let me think...');
+    expect(complete.toolCalls).toEqual([{ id: 'call_1', name: 'read', arguments: {} }]);
   });
 });
 
 describe('hasContent', () => {
   it('should return true for message with text', () => {
-    const partial = { text: 'Hello', thinking: '', toolCalls: [] };
+    const partial = { text: 'Hello', thinking: '', nativeToolText: '', toolCalls: [] };
     expect(hasContent(partial)).toBe(true);
   });
 
   it('should return true for message with thinking', () => {
-    const partial = { text: '', thinking: 'Thinking...', toolCalls: [] };
+    const partial = { text: '', thinking: 'Thinking...', nativeToolText: '', toolCalls: [] };
     expect(hasContent(partial)).toBe(true);
   });
 
   it('should return true for message with tool calls', () => {
-    const partial = { text: '', thinking: '', toolCalls: [{ id: '1', name: 'read', arguments: {} }] };
+    const partial = { text: '', thinking: '', nativeToolText: '', toolCalls: [{ id: '1', name: 'read', arguments: {} }] };
     expect(hasContent(partial)).toBe(true);
   });
 
   it('should return false for empty message', () => {
-    const partial = { text: '', thinking: '', toolCalls: [] };
+    const partial = { text: '', thinking: '', nativeToolText: '', toolCalls: [] };
     expect(hasContent(partial)).toBe(false);
   });
 });
 
 describe('hasToolCalls', () => {
   it('should return true when tool calls present', () => {
-    const partial = { text: '', thinking: '', toolCalls: [{ id: '1', name: 'read', arguments: {} }] };
+    const partial = { text: '', thinking: '', nativeToolText: '', toolCalls: [{ id: '1', name: 'read', arguments: {} }] };
     expect(hasToolCalls(partial)).toBe(true);
   });
 
   it('should return false when no tool calls', () => {
-    const partial = { text: 'Hello', thinking: '', toolCalls: [] };
+    const partial = { text: 'Hello', thinking: '', nativeToolText: '', toolCalls: [] };
     expect(hasToolCalls(partial)).toBe(false);
   });
 });
@@ -685,7 +690,7 @@ describe('validateA2AEvent', () => {
 
 describe('validatePartialMessage', () => {
   it('should return valid for message with text', () => {
-    const partial = { text: 'Hello', thinking: '', toolCalls: [] };
+    const partial = { text: 'Hello', thinking: '', nativeToolText: '', toolCalls: [] };
     const validation = validatePartialMessage(partial);
 
     expect(validation.isValid).toBe(true);
@@ -693,7 +698,7 @@ describe('validatePartialMessage', () => {
   });
 
   it('should return invalid for empty message', () => {
-    const partial = { text: '', thinking: '', toolCalls: [] };
+    const partial = { text: '', thinking: '', nativeToolText: '', toolCalls: [] };
     const validation = validatePartialMessage(partial);
 
     expect(validation.isValid).toBe(false);
@@ -704,6 +709,7 @@ describe('validatePartialMessage', () => {
     const partial = {
       text: 'Hello',
       thinking: '',
+      nativeToolText: '',
       toolCalls: [{ name: 'read', arguments: {} } as any],
     };
     const validation = validatePartialMessage(partial);
@@ -716,6 +722,7 @@ describe('validatePartialMessage', () => {
     const partial = {
       text: 'Hello',
       thinking: '',
+      nativeToolText: '',
       toolCalls: [{ id: '1', arguments: {} } as any],
     };
     const validation = validatePartialMessage(partial);
@@ -728,6 +735,7 @@ describe('validatePartialMessage', () => {
     const partial = {
       text: 'Hello',
       thinking: '',
+      nativeToolText: '',
       toolCalls: [{ id: '1', name: 'read' } as any],
     };
     const validation = validatePartialMessage(partial);
@@ -740,6 +748,7 @@ describe('validatePartialMessage', () => {
     const partial = {
       text: '',
       thinking: '',
+      nativeToolText: '',
       toolCalls: [{ id: '1', name: 'read', arguments: { path: 'test.md' } }],
     };
     const validation = validatePartialMessage(partial);
@@ -791,8 +800,9 @@ describe('unified rendering', () => {
     const nativeToolCall: ToolCallMetadata = {
       callId: 'native_1',
       name: 'web_fetch',
-      args: {},
+      args: { prompt: 'test' },
       status: 'success',
+      responseOutput: 'Result text',
     };
 
     const events: ParsedA2AEvent[] = [
@@ -802,7 +812,10 @@ describe('unified rendering', () => {
 
     const partial = accumulateEvents(events);
 
-    expect(partial.toolCalls).toHaveLength(2);
-    expect(partial.toolCalls.map((c) => c.name)).toEqual(['read', 'web_fetch']);
+    expect(partial.toolCalls).toHaveLength(1);
+    expect(partial.toolCalls[0].name).toBe('read');
+    expect(partial.nativeToolText).toContain('native_web_fetch');
+    expect(partial.nativeToolText).toContain('prompt: test');
+    expect(partial.nativeToolText).toContain('Result text');
   });
 });

@@ -94,15 +94,13 @@ export function updatePartialMessage(
         // Handle native tool formatting as text blocks
         const blocks = { ...(partial.nativeToolBlocks ?? {}) };
         
-        // Format as plain fenced code block (no language identifier = grey block in GSD)
-        // Tool name as first line, args below, response output when available
-        let blockText = '```\nnative_' + name + '\n' + formatArgs(args) + '\n';
+        // Format with indentation — markdown code fences don't render reliably
+        // during streaming. Use plain text with clear visual separation.
+        let blockText = '    native_' + name + '\n    ' + formatArgs(args).split('\n').join('\n    ') + '\n';
 
         if (status === 'success' && responseOutput) {
-          blockText += '\n' + responseOutput + '\n';
+          blockText += '\n    ' + responseOutput.split('\n').join('\n    ') + '\n';
         }
-
-        blockText += '```\n';
         
         blocks[callId] = blockText;
         

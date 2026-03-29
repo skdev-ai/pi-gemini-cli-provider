@@ -519,9 +519,8 @@ async function handleFreshPrompt(
     }
   }
 
-  // Filter out native tool calls from the FINAL message — they were auto-approved
-  // within A2A. They appear in streaming partials (grey blocks) but must not be
-  // in the final message or GSD's agent loop will try to execute them.
+  // Filter out native tool calls from the FINAL message — they are rendered
+  // via nativeToolText (fenced code blocks), not as executable toolCall content.
   // Check both original name and native_ prefixed name.
   const mcpToolCalls = partialMessage.toolCalls.filter(
     (call) => !isNativeTool(call.name) && !call.name.startsWith('native_')

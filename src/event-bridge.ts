@@ -32,7 +32,8 @@ function formatNativeToolText(input: {
   const args = input.args ?? {};
   for (const [key, value] of Object.entries(args)) {
     if (value === undefined || value === null || value === '') continue;
-    lines.push(`${key}: ${String(value)}`);
+    const display = typeof value === 'string' ? value : JSON.stringify(value);
+    lines.push(`${key}: ${display}`);
   }
 
   const output = input.responseOutput?.trim();
@@ -60,7 +61,6 @@ export function createPartialMessage(): PartialAssistantMessage {
     text: '',
     thinking: '',
     nativeToolText: '',
-    nativeToolBlocks: {},
     toolCalls: [],
   };
 }
@@ -329,11 +329,13 @@ export function translateEvents(events: ParsedA2AEvent[]): PiAssistantMessageEve
 export function extractCompleteMessage(partial: PartialAssistantMessage): {
   text: string;
   thinking: string;
+  nativeToolText: string;
   toolCalls: PiToolCallContent[];
 } {
   return {
     text: partial.text,
     thinking: partial.thinking,
+    nativeToolText: partial.nativeToolText,
     toolCalls: partial.toolCalls,
   };
 }

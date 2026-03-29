@@ -601,10 +601,8 @@ export interface PartialAssistantMessage {
   text: string;
   /** Accumulated thinking content */
   thinking: string;
-  /** Accumulated native tool call text blocks */
+  /** Native tool info rendered as fenced code block text */
   nativeToolText: string;
-  /** Internal storage for native tool blocks (not for GSD use) */
-  nativeToolBlocks?: Record<string, string>;
   /** Tool calls emitted so far */
   toolCalls: PiToolCallContent[];
 }

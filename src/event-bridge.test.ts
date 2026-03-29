@@ -106,7 +106,6 @@ describe('createPartialMessage', () => {
     expect(partial.text).toBe('');
     expect(partial.thinking).toBe('');
     expect(partial.nativeToolText).toBe('');
-    expect(partial.nativeToolBlocks).toEqual({});
     expect(partial.toolCalls).toEqual([]);
   });
 });
@@ -564,6 +563,7 @@ describe('extractCompleteMessage', () => {
 
     expect(complete.text).toBe('Hello World');
     expect(complete.thinking).toBe('Let me think...');
+    expect(complete.nativeToolText).toBe('');
     expect(complete.toolCalls).toEqual([{ id: 'call_1', name: 'read', arguments: {} }]);
   });
 });

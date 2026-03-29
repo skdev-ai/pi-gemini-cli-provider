@@ -812,10 +812,11 @@ describe('unified rendering', () => {
 
     const partial = accumulateEvents(events);
 
-    expect(partial.toolCalls).toHaveLength(1);
+    // Both MCP and native tools are in toolCalls — native with native_ prefix
+    expect(partial.toolCalls).toHaveLength(2);
     expect(partial.toolCalls[0].name).toBe('read');
-    expect(partial.nativeToolText).toContain('native_web_fetch');
-    expect(partial.nativeToolText).toContain('prompt: test');
+    expect(partial.toolCalls[1].name).toBe('native_web_fetch');
+    // Response output stored in nativeToolText
     expect(partial.nativeToolText).toContain('Result text');
   });
 });

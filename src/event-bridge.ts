@@ -18,23 +18,6 @@ import type {
 import { stripMcpPrefix, isNativeTool } from './approval-flow.js';
 
 // ============================================================================
-// Helpers
-// ============================================================================
-
-/**
- * Formats tool arguments as key: value pairs per line, stripping JSON syntax.
- */
-function formatArgs(args: unknown): string {
-  if (!args || typeof args !== 'object' || args === null) return '';
-  return Object.entries(args)
-    .map(([key, value]) => {
-      const val = typeof value === 'string' ? value : JSON.stringify(value);
-      return `${key}: ${val}`;
-    })
-    .join('\n');
-}
-
-// ============================================================================
 // Partial Message Accumulation
 // ============================================================================
 
@@ -89,51 +72,57 @@ export function updatePartialMessage(
       }
       
       const { callId, name, args, status, responseOutput } = event.toolCall;
-      
-      if (isNativeTool(name)) {
-        // Handle native tool formatting as text blocks
-        const blocks = { ...(partial.nativeToolBlocks ?? {}) };
-        
-        // Fenced code block — marked v15 tokenizes this as a 'code' token.
-        // The full block is accumulated then emitted, so the markdown renderer
-        // sees the complete fence (not partial deltas).
-        let blockText = '\n```\nnative_' + name + '\n' + formatArgs(args) + '\n';
 
-        if (status === 'success' && responseOutput) {
-          blockText += '\n' + responseOutput + '\n';
+      if (isNativeTool(name)) {
+        // Native tools: add to toolCalls with native_ prefix and formatted args
+        // so GSD renders them as grey tool blocks during streaming.
+        // They are filtered from the FINAL message to prevent execution.
+        const formattedArgs: Record<string, any> = {};
+        if (args && typeof args === 'object') {
+          for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
+            formattedArgs[k] = v;
+          }
         }
 
-        blockText += '```\n';
-        
-        blocks[callId] = blockText;
-        
-        // Join all blocks to compute nativeToolText.
-        // Maintain insertion order by sorting by callId if necessary, 
-        // but for now simple join is fine.
-        const nativeToolText = Object.values(blocks).join('\n');
-        
+        const piToolCall: PiToolCallContent = {
+          id: callId,
+          name: 'native_' + name,
+          arguments: formattedArgs,
+        };
+
+        const newToolCalls = [...partial.toolCalls];
+        const existingIndex = newToolCalls.findIndex(c => c.id === callId);
+        if (existingIndex >= 0) {
+          newToolCalls[existingIndex] = piToolCall;
+        } else {
+          newToolCalls.push(piToolCall);
+        }
+
+        // Store response output (search results/sources) when tool completes
+        let nativeToolText = partial.nativeToolText;
+        if (status === 'success' && responseOutput) {
+          nativeToolText = (nativeToolText ? nativeToolText + '\n' : '') + responseOutput;
+        }
+
         return {
           ...partial,
-          nativeToolBlocks: blocks,
+          toolCalls: newToolCalls,
           nativeToolText,
         };
       }
-      
-      // Convert A2A tool call to pi format (MCP tools only)
+
+      // MCP tools: convert with prefix stripping
       const piToolCall = convertToolCallToPi(event.toolCall);
-      
-      // Check if tool call already exists (update) or is new (add)
+
       const existingIndex = partial.toolCalls.findIndex(
         call => call.id === piToolCall.id
       );
-      
+
       const newToolCalls = [...partial.toolCalls];
-      
+
       if (existingIndex >= 0) {
-        // Update existing tool call
         newToolCalls[existingIndex] = piToolCall;
       } else {
-        // Add new tool call
         newToolCalls.push(piToolCall);
       }
       

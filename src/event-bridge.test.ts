@@ -812,11 +812,14 @@ describe('unified rendering', () => {
 
     const partial = accumulateEvents(events);
 
-    // Both MCP and native tools are in toolCalls — native with native_ prefix
-    expect(partial.toolCalls).toHaveLength(2);
+    // Only MCP tools in toolCalls — native tools go to nativeToolText
+    expect(partial.toolCalls).toHaveLength(1);
     expect(partial.toolCalls[0].name).toBe('read');
-    expect(partial.toolCalls[1].name).toBe('native_web_fetch');
-    // Response output inside native tool's arguments
-    expect(partial.toolCalls[1].arguments.result).toBe('Result text');
+    // Native tool rendered as fenced code block in nativeToolText
+    expect(partial.nativeToolText).toContain('web_fetch');
+    expect(partial.nativeToolText).toContain('prompt: test');
+    expect(partial.nativeToolText).toContain('Result text');
+    expect(partial.nativeToolText).toMatch(/^```\n/);
+    expect(partial.nativeToolText).toMatch(/\n```$/);
   });
 });

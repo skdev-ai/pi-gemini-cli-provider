@@ -17,6 +17,35 @@ import type {
 } from './types.js';
 import { stripMcpPrefix, isNativeTool } from './approval-flow.js';
 
+/**
+ * Format native tool info as a fenced code block for GSD's Markdown renderer.
+ * Produces exactly the shape that marked v15 tokenizes as a block code token,
+ * which GSD's TUI renders with visible fence borders + styled code body.
+ */
+function formatNativeToolText(input: {
+  toolName: 'google_web_search' | 'web_fetch';
+  args?: Record<string, unknown>;
+  responseOutput?: string;
+}): string {
+  const lines: string[] = ['```', input.toolName];
+
+  const args = input.args ?? {};
+  for (const [key, value] of Object.entries(args)) {
+    if (value === undefined || value === null || value === '') continue;
+    lines.push(`${key}: ${String(value)}`);
+  }
+
+  const output = input.responseOutput?.trim();
+  if (output) {
+    lines.push('');
+    lines.push(input.toolName === 'google_web_search' ? 'Sources:' : 'Result:');
+    lines.push(...output.split('\n'));
+  }
+
+  lines.push('```');
+  return lines.join('\n');
+}
+
 // ============================================================================
 // Partial Message Accumulation
 // ============================================================================
@@ -71,39 +100,19 @@ export function updatePartialMessage(
         return partial;
       }
       
-      const { callId, name, args, status, responseOutput } = event.toolCall;
+      const { name, args, responseOutput } = event.toolCall;
 
       if (isNativeTool(name)) {
-        // Native tools: add to toolCalls with native_ prefix so GSD renders
-        // them as grey tool blocks. Filtered from FINAL message to prevent execution.
-        // Include response output (sources) in arguments so it renders inside the block.
-        const displayArgs: Record<string, any> = {};
-        if (args && typeof args === 'object') {
-          for (const [k, v] of Object.entries(args as Record<string, unknown>)) {
-            displayArgs[k] = v;
-          }
-        }
-        if (status === 'success' && responseOutput) {
-          displayArgs['result'] = responseOutput;
-        }
-
-        const piToolCall: PiToolCallContent = {
-          id: callId,
-          name: 'native_' + name,
-          arguments: displayArgs,
-        };
-
-        const newToolCalls = [...partial.toolCalls];
-        const existingIndex = newToolCalls.findIndex(c => c.id === callId);
-        if (existingIndex >= 0) {
-          newToolCalls[existingIndex] = piToolCall;
-        } else {
-          newToolCalls.push(piToolCall);
-        }
-
+        // Native tools rendered as nativeToolText (fenced code block), NOT as
+        // toolCall content. This gives correct ordering (before model text) and
+        // avoids GSD's 40-char truncation and execution attempts.
         return {
           ...partial,
-          toolCalls: newToolCalls,
+          nativeToolText: formatNativeToolText({
+            toolName: name as 'google_web_search' | 'web_fetch',
+            args: (args ?? {}) as Record<string, unknown>,
+            responseOutput,
+          }),
         };
       }
 

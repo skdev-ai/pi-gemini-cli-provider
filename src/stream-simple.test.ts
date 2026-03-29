@@ -316,13 +316,13 @@ describe('streamSimple', () => {
       message: {
         stopReason: 'toolUse',
         content: [
+          { type: 'text', text: 'Let me search' },
           {
             type: 'toolCall',
             id: 'call_1',
             name: 'search',
             arguments: { query: 'test' },
           },
-          { type: 'text', text: 'Let me search' },
         ],
       },
     });

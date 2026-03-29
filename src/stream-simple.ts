@@ -934,8 +934,18 @@ function partialMessageToContent(partialMessage: {
     content.push({ type: 'thinking', thinking: partialMessage.thinking });
   }
 
-  // Tool calls before text — native tools (grey blocks) and MCP tools
-  // appear before the model's answer text
+  // Native tool text (fenced code block) before model answer text.
+  // This is the text-path rendering for native tools — ordering is correct
+  // because assistant-message.ts renders text blocks in content-array order.
+  if (partialMessage.nativeToolText && partialMessage.nativeToolText.length > 0) {
+    content.push({ type: 'text', text: partialMessage.nativeToolText });
+  }
+
+  if (partialMessage.text.length > 0) {
+    content.push({ type: 'text', text: partialMessage.text });
+  }
+
+  // MCP tool calls (only — native tools use nativeToolText above)
   for (const toolCall of partialMessage.toolCalls) {
     content.push({
       type: 'toolCall',
@@ -943,15 +953,6 @@ function partialMessageToContent(partialMessage: {
       name: toolCall.name,
       arguments: toolCall.arguments,
     });
-  }
-
-  // Native tool results/sources after tool blocks, before model answer
-  if (partialMessage.nativeToolText && partialMessage.nativeToolText.length > 0) {
-    content.push({ type: 'text', text: partialMessage.nativeToolText });
-  }
-
-  if (partialMessage.text.length > 0) {
-    content.push({ type: 'text', text: partialMessage.text });
   }
 
   return content;

@@ -92,15 +92,19 @@ export function getSchemaFilePath(): string {
 /**
  * Write tool schemas to disk.
  * 
- * @param pi - Extension API with getAllTools() method
+ * @param pi - Extension API with getAllTools() and optional getActiveTools()
  * @returns Result with path, staleness, and tool count
  */
-export function writeToolSchemas(pi: { getAllTools(): ToolInfo[] }): WriteToolSchemasResult {
+export function writeToolSchemas(pi: { getAllTools(): ToolInfo[]; getActiveTools?(): string[] }): WriteToolSchemasResult {
   const schemaFilePath = getSchemaFilePath();
-  
-  // Get all tools and filter by denylist
+
+  // Only export tools that are both registered AND active in the session.
+  // getAllTools() returns the full registry, but the agent loop only executes
+  // tools in the active set. Advertising inactive tools causes "Tool not found."
   const allTools = pi.getAllTools();
-  const filteredSchemas = filterAndConvertTools(allTools);
+  const activeNames = pi.getActiveTools ? new Set(pi.getActiveTools()) : null;
+  const activeTools = activeNames ? allTools.filter(t => activeNames.has(t.name)) : allTools;
+  const filteredSchemas = filterAndConvertTools(activeTools);
   
   // Ensure directory exists
   const schemaDir = dirname(schemaFilePath);
@@ -137,16 +141,18 @@ export function writeToolSchemas(pi: { getAllTools(): ToolInfo[] }): WriteToolSc
 /**
  * Check if schemas are stale (different from what's on disk).
  */
-export function areSchemasStale(pi: { getAllTools(): ToolInfo[] }): boolean {
+export function areSchemasStale(pi: { getAllTools(): ToolInfo[]; getActiveTools?(): string[] }): boolean {
   const schemaFilePath = getSchemaFilePath();
-  
+
   if (!existsSync(schemaFilePath)) {
     return true; // No file exists - definitely stale
   }
-  
+
   try {
     const allTools = pi.getAllTools();
-    const filteredSchemas = filterAndConvertTools(allTools);
+    const activeNames = pi.getActiveTools ? new Set(pi.getActiveTools()) : null;
+    const activeTools = activeNames ? allTools.filter(t => activeNames.has(t.name)) : allTools;
+    const filteredSchemas = filterAndConvertTools(activeTools);
     const existingContent = readFileSync(schemaFilePath, 'utf-8');
     
     // Compare by JSON string representation

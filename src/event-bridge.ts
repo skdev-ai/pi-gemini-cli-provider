@@ -94,13 +94,16 @@ export function updatePartialMessage(
         // Handle native tool formatting as text blocks
         const blocks = { ...(partial.nativeToolBlocks ?? {}) };
         
-        // Format with indentation — markdown code fences don't render reliably
-        // during streaming. Use plain text with clear visual separation.
-        let blockText = '    native_' + name + '\n    ' + formatArgs(args).split('\n').join('\n    ') + '\n';
+        // Fenced code block — marked v15 tokenizes this as a 'code' token.
+        // The full block is accumulated then emitted, so the markdown renderer
+        // sees the complete fence (not partial deltas).
+        let blockText = '\n```\nnative_' + name + '\n' + formatArgs(args) + '\n';
 
         if (status === 'success' && responseOutput) {
-          blockText += '\n    ' + responseOutput.split('\n').join('\n    ') + '\n';
+          blockText += '\n' + responseOutput + '\n';
         }
+
+        blockText += '```\n';
         
         blocks[callId] = blockText;
         

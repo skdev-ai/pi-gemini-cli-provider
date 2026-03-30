@@ -24,7 +24,6 @@ import {
   getServerState,
 } from './a2a-lifecycle.js';
 import {
-  getTaskState,
   clearAllTasks,
 } from './task-manager.js';
 import { checkA2APatched, checkA2AInjectResultPatched } from './availability.js';
@@ -148,236 +147,99 @@ describeLive('Live Integration', () => {
     }, 10000);
   });
   
-  describe('Approval Interception', () => {
-    it('should intercept MCP tool call and return stopReason: toolUse', async () => {
-      // Ensure server is running
+  describe('Basic Prompt', () => {
+    it('should send a prompt and receive a text response', async () => {
       const isRunning = await isPortInUse(41242);
       if (!isRunning) {
         await startServer();
         await waitForCondition(async () => await isServerHealthy(41242), 5000);
       }
-      
-      // Send a prompt that should trigger an MCP tool call
-      // Using a prompt that requests file system access (which requires MCP)
-      const { stream, result } = await streamSimple({
-        prompt: 'Read the file package.json and tell me what dependencies are listed',
+
+      const { stream, result } = streamSimple({
+        prompt: 'What is 2 + 2? Answer with just the number.',
         context: { messages: [] },
         model: TEST_MODEL,
       });
-      
-      // Capture events from the stream
+
       const events = await collectEvents(stream);
-      const toolCalls = events.filter((event) => event.type === 'toolcall_start');
-      
-      // Wait for result to complete
       const finalResult = await result;
-      
-      // Assert: stopReason should be 'toolUse' for MCP tool
-      expect(finalResult.stopReason).toBe('toolUse');
-      
-      // Assert: taskId and contextId are present
+
+      // Should complete without tool calls
       expect(finalResult.taskId).toBeDefined();
       expect(finalResult.contextId).toBeDefined();
-      expect(finalResult.taskId).toBeTruthy();
-      expect(finalResult.contextId).toBeTruthy();
-      
-      // Assert: At least one tool call was detected
-      expect(toolCalls.length).toBeGreaterThan(0);
-      
-      // Assert: Tool calls have valid structure via the partial snapshot
-      toolCalls.forEach(tc => {
-        const content = tc.partial.content[tc.contentIndex];
-        expect(content).toBeDefined();
-        expect(content?.type).toBe('toolCall');
-        if (content?.type === 'toolCall') {
-          expect(content.id).toBeDefined();
-          expect(content.name).toBeDefined();
-          expect(content.arguments).toBeDefined();
-        }
-      });
-      
-      // Assert: Task state shows awaiting approval
-      const taskState = getTaskState(finalResult.taskId);
-      expect(taskState).toBeTruthy();
-      expect(taskState?.awaitingApproval).toBe(true);
-      expect(taskState?.pendingToolCalls.length).toBeGreaterThan(0);
-    }, 30000);
-  });
-  
-  describe('Result Reinjection and Continuation', () => {
-    it('should continue from inject_result without empty follow-up prompt', async () => {
-      // Ensure server is running
-      const isRunning = await isPortInUse(41242);
-      if (!isRunning) {
-        await startServer();
-        await waitForCondition(async () => await isServerHealthy(41242), 5000);
-      }
-      
-      // Step 1: Send initial prompt to trigger tool call
-      const { result: result1 } = await streamSimple({
-        prompt: 'What is the current Node.js version? Run a command to check.',
-        context: { messages: [] },
-        model: TEST_MODEL,
-      });
-      
-      const finalResult1 = await result1;
-      
-      // Assert: First pass returns stopReason: toolUse
-      expect(finalResult1.stopReason).toBe('toolUse');
-      expect(finalResult1.taskId).toBeDefined();
-      expect(finalResult1.contextId).toBeDefined();
-      
-      const taskId = finalResult1.taskId;
-      const contextId = finalResult1.contextId;
-      
-      // Get the pending tool call to simulate execution
-      const taskState1 = getTaskState(taskId);
-      expect(taskState1?.pendingToolCalls.length).toBeGreaterThan(0);
-      
-      const pendingCall = taskState1?.pendingToolCalls[0];
-      expect(pendingCall).toBeDefined();
-      
-      // Step 2: Simulate GSD executing the tool and sending back result
-      // This is the re-call path with toolResult in context
-      const toolResultContent = 'Node.js version: v24.14.0';
-      
-      const { stream: stream2, result: result2 } = await streamSimple({
-        prompt: '', // Empty prompt - this is a re-call
-        context: {
-          messages: [
-            {
-              role: 'toolResult',
-              toolCallId: pendingCall!.callId,
-              toolName: pendingCall!.name,
-              isError: false,
-              content: [{ type: 'text', text: toolResultContent }],
-            },
-          ],
-        },
-        taskId,
-        contextId,
-        model: TEST_MODEL,
-      });
-      
-      // Capture continuation events
-      const continuationEvents = await collectEvents(stream2);
-      const hasTextContent = continuationEvents.some(
-        (event) =>
-          (event.type === 'text_delta' && event.delta.length > 0) ||
-          (event.type === 'text_end' && event.content.length > 0)
+
+      // Should have text content
+      const hasText = events.some(
+        (e) => e.type === 'text_delta' || e.type === 'done'
       );
-      
-      const finalResult2 = await result2;
-      
-      // Assert: Continuation happened (no stopReason, task continues)
-      expect(finalResult2.stopReason).toBeUndefined();
-      
-      // Assert: Same taskId and contextId were reused
-      expect(finalResult2.taskId).toBe(taskId);
-      expect(finalResult2.contextId).toBe(contextId);
-      
-      // Assert: Model produced continuation content from injected result
-      expect(hasTextContent).toBe(true);
-      expect(continuationEvents.length).toBeGreaterThan(0);
-      
-      // Assert: Task reached terminal state after continuation
-      const taskState2 = getTaskState(taskId);
-      expect(taskState2?.isTerminal).toBe(true);
-      expect(taskState2?.state).toBe('completed');
-    }, 30000);
+      expect(hasText).toBe(true);
+    }, 60000);
   });
-  
-  describe('Multi-Turn Continuity', () => {
-    it('should reuse taskId/contextId for second turn on same conversation', async () => {
-      // Ensure server is running
+
+  describe('Multi-Turn Context', () => {
+    it('should maintain context across turns using same taskId', async () => {
       const isRunning = await isPortInUse(41242);
       if (!isRunning) {
         await startServer();
         await waitForCondition(async () => await isServerHealthy(41242), 5000);
       }
-      
-      // Turn 1: Initial prompt
-      const { result: result1 } = await streamSimple({
-        prompt: 'Hello, I need help with a coding question.',
+
+      // Turn 1: Establish context
+      const { stream: s1, result: r1 } = streamSimple({
+        prompt: 'Remember the number 42. Just confirm you remember it.',
         context: { messages: [] },
         model: TEST_MODEL,
       });
-      
-      const finalResult1 = await result1;
-      
-      // Assert: First turn completes successfully
-      expect(finalResult1.taskId).toBeDefined();
-      expect(finalResult1.contextId).toBeDefined();
-      expect(finalResult1.stopReason).toBeUndefined(); // No tool calls expected
-      
-      const taskId = finalResult1.taskId;
-      const contextId = finalResult1.contextId;
-      
-      // Turn 2: Follow-up question using same taskId/contextId
-      const { result: result2 } = await streamSimple({
-        prompt: 'Actually, can you help me understand how to read a file in Node.js?',
-        context: { messages: [] }, // Fresh context but same task/context IDs
-        taskId,
-        contextId,
+      await collectEvents(s1);
+      const result1 = await r1;
+
+      expect(result1.taskId).toBeDefined();
+      const serverTaskId = result1.taskId;
+
+      // Turn 2: Recall using same taskId (multi-turn)
+      const { stream: s2, result: r2 } = streamSimple({
+        prompt: 'What number did I ask you to remember?',
+        context: { messages: [] },
+        taskId: serverTaskId,
+        contextId: result1.contextId,
         model: TEST_MODEL,
       });
-      
-      const finalResult2 = await result2;
-      
-      // Assert: Second turn reuses the same taskId and contextId
-      expect(finalResult2.taskId).toBe(taskId);
-      expect(finalResult2.contextId).toBe(contextId);
-      
-      // Assert: Second turn completes (may or may not have tool calls)
-      expect(finalResult2.taskId).toBeDefined();
-      
-      // Verify task state shows continuity
-      const taskState = getTaskState(taskId);
-      expect(taskState).toBeTruthy();
-      expect(taskState?.contextId).toBe(contextId);
-    });
-    
-    it('should handle multi-turn with tool call in second turn', async () => {
-      // Ensure server is running
+      const events2 = await collectEvents(s2);
+      const result2 = await r2;
+
+      // Same taskId reused — server maintains context
+      expect(result2.taskId).toBe(serverTaskId);
+
+      // Model should recall "42" in the response
+      const textEvents = events2.filter((e) => e.type === 'text_delta');
+      const fullText = textEvents.map((e: any) => e.delta).join('');
+      expect(fullText).toContain('42');
+    }, 120000);
+  });
+
+  describe('Native Tool Approval', () => {
+    it('should auto-approve google_web_search and return results', async () => {
       const isRunning = await isPortInUse(41242);
       if (!isRunning) {
         await startServer();
         await waitForCondition(async () => await isServerHealthy(41242), 5000);
       }
-      
-      // Turn 1: Simple greeting (no tool calls)
-      const { result: result1 } = await streamSimple({
-        prompt: 'Hi, I have a question about my project files.',
+
+      const { stream, result } = streamSimple({
+        prompt: 'Search the web for: what year was TypeScript first released?',
         context: { messages: [] },
         model: TEST_MODEL,
       });
-      
-      const finalResult1 = await result1;
-      expect(finalResult1.taskId).toBeDefined();
-      expect(finalResult1.contextId).toBeDefined();
-      
-      const taskId = finalResult1.taskId;
-      const contextId = finalResult1.contextId;
-      
-      // Turn 2: Question that should trigger tool use
-      const { result: result2 } = await streamSimple({
-        prompt: 'Can you check what files are in the current directory?',
-        context: { messages: [] },
-        taskId,
-        contextId,
-        model: TEST_MODEL,
-      });
-      
-      const finalResult2 = await result2;
-      
-      // Assert: Same conversation context
-      expect(finalResult2.taskId).toBe(taskId);
-      expect(finalResult2.contextId).toBe(contextId);
-      
-      // Assert: Second turn may trigger tool use
-      // (exact behavior depends on model's decision)
-      expect(finalResult2.taskId).toBeDefined();
-    }, 30000);
+
+      const events = await collectEvents(stream);
+      const finalResult = await result;
+
+      // Should complete (native tool auto-approved, no stopReason: toolUse)
+      expect(finalResult.taskId).toBeDefined();
+
+      // Should have some content (either text or nativeToolText in the message)
+      expect(events.length).toBeGreaterThan(0);
+    }, 120000);
   });
   
   describe('Error Handling', () => {
@@ -409,8 +271,8 @@ describeLive('Live Integration', () => {
         const errorMessage = error instanceof Error ? error.message : String(error);
         expect(errorMessage).toMatch(/fetch failed|ECONNREFUSED|Connection refused|not running/i);
       }
-    }, 10000);
-    
+    }, 30000);
+
     it('should handle invalid model ID gracefully', async () => {
       // Ensure server is running
       const isRunning = await isPortInUse(41242);

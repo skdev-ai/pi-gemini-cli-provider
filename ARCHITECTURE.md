@@ -48,14 +48,27 @@ GSD's tools are exposed to Gemini through a two-stage bridge:
 
 Tool names are prefixed with `mcp_tools_` by the A2A server's MCP bridge. The extension strips this prefix for GSD compatibility.
 
+## Multi-Turn Context
+
+The extension maintains conversation history by reusing the same A2A taskId across prompts within a GSD session:
+
+- **First prompt**: No taskId sent — server creates a new task, returns its ID
+- **Subsequent prompts**: Server-assigned taskId sent in `message.taskId` — server finds the existing task and appends to its `ChatSession` history
+- **Session reset**: GSD's `session_switch` event (triggered by `/clear`, `/new`, or `ctx.newSession()` in workflows) calls `resetTaskContext()`, clearing `lastTaskId`. The next prompt creates a fresh task.
+
+The A2A server's `ChatSession` object accumulates conversation history per task. This gives the model full context of prior turns without re-sending history from the extension side.
+
+**Limitation**: No compaction or overflow handling. The conversation history grows unbounded until the Gemini API rejects it (1M token limit).
+
 ## Native Tool Handling
 
 Gemini's built-in tools (`google_web_search`, `web_fetch`) execute server-side — they don't need GSD execution:
 
 - Extension detects native tools via `isNativeTool()` check
-- Auto-approves with `proceed_once` outcome
+- Auto-approves with `proceed_once` outcome via post-loop approval: the SSE stream closes with `input-required` + `final=true`, then the extension sends the approval on a new HTTP connection. The approval SSE response carries the tool execution results AND the model's text continuation.
 - Results rendered as `nativeToolText` (heading + blockquote) in the text stream, positioned before model response text
 - Vertex AI grounding redirect URLs resolved to actual website URLs via HEAD requests
+- Markdown formatting stripped from response output to ensure uniform blockquote styling in GSD's TUI
 
 Native tools are NOT added to `partial.toolCalls` — this prevents GSD from attempting to execute them or displaying them in the tool execution UI.
 
@@ -95,3 +108,9 @@ Prevents the server from aborting tasks with pending tool calls when the HTTP so
 - **HTTP errors**: Response body captured and logged
 - **Tool failures**: `rejectResult()` used instead of `resolveResult()` — crashes GSD cleanly rather than leaving it stuck waiting
 - **Server crashes**: Health monitor (30s interval) detects failures; respawns unless manually stopped
+- **Re-call fallback**: If a re-call finds no pending tool calls (state mismatch), falls back to sending the tool result as a text message to the same task instead of crashing
+- **SSE idle timeout**: 120 seconds to accommodate Gemini API rate limiting delays
+
+## Memory Leak Mitigation
+
+The A2A server uses `InMemoryTaskStore` which never frees completed tasks. The extension tracks combined task count (search + provider) and auto-restarts the server at 1000 total tasks to reclaim memory.

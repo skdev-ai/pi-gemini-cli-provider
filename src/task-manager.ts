@@ -6,7 +6,7 @@
  */
 
 import type { TaskState, ParsedA2AEvent, ToolCallMetadata } from './types.js';
-import { errorLog } from './logger.js';
+import { debugLog } from './logger.js';
 
 // ============================================================================
 // State
@@ -52,7 +52,7 @@ export function createTask(): TaskState {
 export function createTaskWithIds(taskId: string, contextId: string): TaskState {
   const existing = taskStore.get(taskId);
   if (existing && existing.pendingToolCalls.length > 0) {
-    errorLog('task-mgr', `WARNING: createTaskWithIds OVERWRITING task ${taskId} with ${existing.pendingToolCalls.length} pending tools: ${existing.pendingToolCalls.map(t => t.name).join(',')}`);
+    debugLog('task-mgr', `WARNING: createTaskWithIds OVERWRITING task ${taskId} with ${existing.pendingToolCalls.length} pending tools: ${existing.pendingToolCalls.map(t => t.name).join(',')}`);
   }
   const initialState: TaskState = {
     taskId,
@@ -126,7 +126,7 @@ export function updateTaskState(taskId: string, event: ParsedA2AEvent): TaskStat
   // Update awaiting approval from input-required + final pattern
   if (state.state === 'input-required' && event.result.final === true) {
     state.awaitingApproval = state.pendingToolCalls.length > 0;
-    errorLog('task-mgr', `input-required+final check: pending=${state.pendingToolCalls.length} awaitingApproval=${state.awaitingApproval}`);
+    debugLog('task-mgr', `input-required+final check: pending=${state.pendingToolCalls.length} awaitingApproval=${state.awaitingApproval}`);
   }
   
   taskStore.set(taskId, state);
@@ -140,7 +140,7 @@ export function updateTaskState(taskId: string, event: ParsedA2AEvent): TaskStat
  * @param toolCall - Tool call metadata to add/update
  */
 function updatePendingToolCall(state: TaskState, toolCall: ToolCallMetadata): void {
-  errorLog('task-mgr', `updatePendingToolCall: callId=${toolCall.callId} name=${toolCall.name} status=${toolCall.status} cleared=${state.clearedCallIds?.has(toolCall.callId)}`);
+  debugLog('task-mgr', `updatePendingToolCall: callId=${toolCall.callId} name=${toolCall.name} status=${toolCall.status} cleared=${state.clearedCallIds?.has(toolCall.callId)}`);
 
   // Reject replayed events for calls that were already cleared.
   if (state.clearedCallIds?.has(toolCall.callId)) {
@@ -156,7 +156,7 @@ function updatePendingToolCall(state: TaskState, toolCall: ToolCallMetadata): vo
   } else {
     state.pendingToolCalls.push(toolCall);
   }
-  errorLog('task-mgr', `pendingToolCalls now: ${state.pendingToolCalls.length} [${state.pendingToolCalls.map(t => t.name).join(',')}]`);
+  debugLog('task-mgr', `pendingToolCalls now: ${state.pendingToolCalls.length} [${state.pendingToolCalls.map(t => t.name).join(',')}]`);
 }
 
 /**
@@ -169,7 +169,7 @@ function updatePendingToolCall(state: TaskState, toolCall: ToolCallMetadata): vo
 export function clearPendingToolCalls(taskId: string, callIds?: string[]): TaskState | null {
   const state = taskStore.get(taskId);
   if (!state) return null;
-  errorLog('task-mgr', `clearPendingToolCalls: taskId=${taskId} clearing=${callIds?.join(',') ?? 'ALL'} before=${state.pendingToolCalls.map(t => t.name).join(',')}`);
+  debugLog('task-mgr', `clearPendingToolCalls: taskId=${taskId} clearing=${callIds?.join(',') ?? 'ALL'} before=${state.pendingToolCalls.map(t => t.name).join(',')}`);
   
   if (!state.clearedCallIds) state.clearedCallIds = new Set();
 

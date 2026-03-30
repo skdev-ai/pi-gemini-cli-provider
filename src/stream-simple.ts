@@ -10,7 +10,7 @@
 import type { Context } from './pi-types.js';
 import { sendMessageStream, injectResult, approveToolCall } from './a2a-client.js';
 import { parseSSEStream } from './sse-parser.js';
-import { errorLog } from './logger.js';
+import { errorLog, debugLog } from './logger.js';
 import { resolveVertexUrls } from './url-resolver.js';
 import {
   createTaskWithIds,
@@ -317,7 +317,7 @@ export function streamSimple(params: StreamSimpleParams): {
       await incrementProviderTaskCount();
 
       const isReCall = Boolean(taskId) && detectReCall(context.messages);
-      errorLog('stream', `streamSimple called: taskId=${taskId ?? 'none'} isReCall=${isReCall} prompt=${prompt?.slice(0, 50)}`);
+      debugLog('stream', `streamSimple called: taskId=${taskId ?? 'none'} isReCall=${isReCall} prompt=${prompt?.slice(0, 50)}`);
       const result = isReCall
         ? await handleReCall(stream, {
             context,
@@ -339,7 +339,7 @@ export function streamSimple(params: StreamSimpleParams): {
       {
         lastTaskId = result.taskId;
         lastContextId = result.contextId;
-        errorLog('stream', `streamSimple completed: resultTaskId=${result.taskId} stopReason=${result.stopReason}`);
+        debugLog('stream', `streamSimple completed: resultTaskId=${result.taskId} stopReason=${result.stopReason}`);
       }
 
       const messageMetadata = createMessageMetadata(model);
@@ -407,7 +407,7 @@ export function streamSimpleGsd(
   const prompt = extractPromptFromContext(context);
 
   // Always pass lastTaskId when available
-  errorLog('stream', `streamSimpleGsd: lastTaskId=${lastTaskId ?? 'none'}`);
+  debugLog('stream', `streamSimpleGsd: lastTaskId=${lastTaskId ?? 'none'}`);
   const { stream } = streamSimple({
     prompt,
     context,
@@ -480,10 +480,10 @@ async function handleFreshPrompt(
       }
     }
 
-    errorLog('stream', `SSE event: kind=${event.kind} state=${event.result?.status?.state} final=${event.result?.final} isAwait=${event.isAwaitingApproval} hasToolCall=${!!event.toolCall}`);
+    debugLog('stream', `SSE event: kind=${event.kind} state=${event.result?.status?.state} final=${event.result?.final} isAwait=${event.isAwaitingApproval} hasToolCall=${!!event.toolCall}`);
     const stateAfter = updateTaskState(serverTaskId ?? a2aTaskId, event);
     if (stateAfter) {
-      errorLog('stream', `  taskState: awaiting=${stateAfter.awaitingApproval} pending=${stateAfter.pendingToolCalls.length} state=${stateAfter.state}`);
+      debugLog('stream', `  taskState: awaiting=${stateAfter.awaitingApproval} pending=${stateAfter.pendingToolCalls.length} state=${stateAfter.state}`);
     }
     const nextPartial = updatePartialMessage(partialMessage, event);
     copyPartialMessage(partialMessage, nextPartial);
@@ -493,7 +493,7 @@ async function handleFreshPrompt(
     const updatedState = getTaskState(effectiveTaskId);
     if (updatedState?.awaitingApproval) {
       const _pending = getPendingToolCalls(effectiveTaskId);
-      errorLog('stream', `awaitingApproval detected! pendingToolCalls=${_pending.length} tools=${_pending.map(t => t.name).join(',')}`);
+      debugLog('stream', `awaitingApproval detected! pendingToolCalls=${_pending.length} tools=${_pending.map(t => t.name).join(',')}`);
       const pendingToolCalls = getPendingToolCalls(effectiveTaskId);
 
       if (pendingToolCalls.length > 0) {
@@ -569,7 +569,7 @@ async function handleFreshPrompt(
     if (hasMcpCalls) {
       stopReason = 'toolUse';
     } else if (hasNativeCalls) {
-      errorLog('stream', `Post-loop native approval: ${pendingToolCalls.length} native tools`);
+      debugLog('stream', `Post-loop native approval: ${pendingToolCalls.length} native tools`);
       for (const toolCall of pendingToolCalls.filter((tc) => isNativeTool(tc.name))) {
         try {
           const { sseStream: approveStream } = await approveToolCall({
@@ -580,7 +580,7 @@ async function handleFreshPrompt(
           });
 
           for await (const approveEvent of parseSSEStream(approveStream, { signal })) {
-            errorLog('stream', `Approval SSE: kind=${approveEvent.kind} state=${approveEvent.result?.status?.state} final=${approveEvent.result?.final}`);
+            debugLog('stream', `Approval SSE: kind=${approveEvent.kind} state=${approveEvent.result?.status?.state} final=${approveEvent.result?.final}`);
             updateTaskState(effectiveTaskId, approveEvent);
             const approvePartial = updatePartialMessage(partialMessage, approveEvent);
             copyPartialMessage(partialMessage, approvePartial);
@@ -660,10 +660,23 @@ async function handleReCall(
   }
 
   const pendingToolCalls = getPendingToolCalls(taskId);
-  const taskState = getTaskState(taskId);
-  errorLog('stream', `handleReCall: taskId=${taskId} taskExists=${!!taskState} pending=${pendingToolCalls.length} tools=${pendingToolCalls.map(t => t.name).join(',')} extractedResults=${extractedResults.length}`);
+  debugLog('stream', `handleReCall: taskId=${taskId} pending=${pendingToolCalls.length} tools=${pendingToolCalls.map(t => t.name).join(',')} extractedResults=${extractedResults.length}`);
   if (pendingToolCalls.length === 0) {
-    throw new Error('Re-call detected but task has no pending tool calls');
+    // Graceful fallback: pending tools were cleared (possibly by a race condition
+    // or state mismatch). Instead of crashing, send the tool result as a text
+    // message to the same task so the conversation can continue.
+    errorLog('stream', `handleReCall: no pending tools — falling back to fresh prompt with tool result summary`);
+    const resultSummary = extractedResults
+      .map(r => `[Tool ${r.toolName}: ${JSON.stringify(r.payload).slice(0, 200)}]`)
+      .join('\n');
+    return handleFreshPrompt(stream, {
+      prompt: resultSummary,
+      context: params.context,
+      taskId,
+      contextId,
+      model,
+      signal,
+    });
   }
 
   const validation = validateReinjectionCompleteness(pendingToolCalls, extractedResults);

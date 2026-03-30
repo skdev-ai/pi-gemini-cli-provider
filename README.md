@@ -11,7 +11,8 @@ Google's Gemini CLI includes an A2A server that exposes Gemini models over HTTP 
 - **No API key needed** — uses your existing Google AI Pro subscription via Gemini CLI OAuth
 - **Full tool support** — GSD's tools (Read, Edit, Bash, Grep, etc.) are exposed to the model via MCP
 - **Native search and fetch** — Gemini's built-in `google_web_search` and `web_fetch` run server-side with no extra setup
-- **Shared server** — one A2A server process shared across all GSD sessions
+- **Multi-turn context** — conversation history maintained per A2A task; GSD session resets (`/clear`, `/new`, workflow steps) start fresh tasks
+- **Shared server** — one A2A server process shared across all GSD sessions, survives GSD exit
 
 **Approach to ToS:** The extension spawns official Google binaries (`@google/gemini-cli-a2a-server`) using the same OAuth credentials as regular Gemini CLI usage. All communication uses Google's own A2A protocol. See the [search extension's ToS discussion](https://github.com/skdev-ai/pi-gemini-cli-search#why-this-approach) for details.
 
@@ -83,6 +84,12 @@ The `/gemini-cli install-a2a` command installs `@google/gemini-cli-a2a-server` g
 Any model available through the Gemini API can be selected from GSD's model picker.
 
 **Rate limiting:** Starting March 25, 2026, Google has implemented [aggressive rate limiting](https://github.com/google-gemini/gemini-cli/discussions/22970) for Pro models, even for paying accounts.
+
+## Known Limitations
+
+- **Context window overflow**: The A2A server accumulates conversation history per task with no compaction. Gemini models have 1M token context windows. Very long sessions may eventually hit this limit, resulting in an API error. Start a new session (`/clear`) to reset.
+- **No token usage reporting**: The A2A protocol does not expose token usage metadata. GSD's auto-compaction cannot trigger based on context fullness.
+- **Gemini rate limiting**: Google has implemented aggressive rate limiting for Pro models. Flash models are less affected. When rate-limited, the model response may take 60-120 seconds.
 
 ## Architecture
 

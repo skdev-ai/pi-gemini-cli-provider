@@ -16,7 +16,7 @@ import { openSync } from 'node:fs';
 import { promisify } from 'node:util';
 import type { A2AServerState, SearchError } from './types.js';
 import { getA2APackageRoot } from './a2a-path.js';
-import { checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched, checkA2AToolCompletionNotifierPatched } from './availability.js';
+import { checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched } from './availability.js';
 import { isPortInUse, isServerHealthy } from './port-check.js';
 import { debugLog } from './logger.js';
 import { resolveWorkspacePath } from './workspace-generator.js';
@@ -305,12 +305,11 @@ export async function startServer(config?: A2AStartupConfig): Promise<void> {
       const hasPatch2 = checkA2APatched(serverPath);
       const hasPatch3 = checkA2AInjectResultPatched();
       const hasPatch4 = checkA2APendingToolAbortPatched(serverPath);
-      const hasPatch5 = checkA2AToolCompletionNotifierPatched(serverPath);
 
-      if (!hasPatch2 || !hasPatch3 || !hasPatch4 || !hasPatch5) {
-        log(`Warning: Reusing server but patches missing (Patch2: ${hasPatch2}, Patch3: ${hasPatch3}, Patch4: ${hasPatch4}, Patch5: ${hasPatch5})`);
+      if (!hasPatch2 || !hasPatch3 || !hasPatch4) {
+        log(`Warning: Reusing server but patches missing (Patch2: ${hasPatch2}, Patch3: ${hasPatch3}, Patch4: ${hasPatch4})`);
       } else {
-        log('Required patches (Patch 2-5) verified on running server');
+        log('Required patches (Patch 2, Patch 3, and Patch 4) verified on running server');
       }
     }
     
@@ -363,10 +362,6 @@ export async function startServer(config?: A2AStartupConfig): Promise<void> {
 
       if (!checkA2APendingToolAbortPatched(serverPath)) {
         throw createSearchError('A2A_PENDING_TOOL_ABORT_NOT_PATCHED', 'pending-tool abort preservation patch not found in A2A bundle');
-      }
-
-      if (!checkA2AToolCompletionNotifierPatched(serverPath)) {
-        throw createSearchError('A2A_TOOL_COMPLETION_NOTIFIER_NOT_PATCHED', 'toolCompletionNotifier patch not found in A2A bundle');
       }
 
       // Spawn fully detached: stdio to log files, no pipes to parent.

@@ -15,8 +15,9 @@ import { errorLog } from './logger.js';
 // Constants
 // ============================================================================
 
-/** Default timeout for SSE response in milliseconds */
-const RESPONSE_TIMEOUT_MS = 45000;
+/** Default idle timeout for SSE response in milliseconds.
+ * Must be long enough to handle Gemini API rate limiting (observed 100s+ delays). */
+const RESPONSE_TIMEOUT_MS = 120000;
 
 // ============================================================================
 // SSE Parser
@@ -303,9 +304,7 @@ export function extractToolCall(result: A2AResult): ToolCallMetadata | null {
  * @returns True if task is awaiting approval
  */
 export function isAwaitingApproval(result: A2AResult): boolean {
-  // Patch 5 changed final to false to keep SSE stream open,
-  // so we detect approval from state alone (not final flag).
-  return result.status?.state === 'input-required';
+  return result.status?.state === 'input-required' && result.final === true;
 }
 
 /**

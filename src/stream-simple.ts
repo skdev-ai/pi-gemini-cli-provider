@@ -13,7 +13,6 @@ import { parseSSEStream } from './sse-parser.js';
 import { errorLog } from './logger.js';
 import { resolveVertexUrls } from './url-resolver.js';
 import {
-  createTask,
   createTaskWithIds,
   updateTaskState,
   getTaskState,
@@ -407,9 +406,8 @@ export function streamSimpleGsd(
 ): AssistantMessageEventStream {
   const prompt = extractPromptFromContext(context);
 
-  // Always pass lastTaskId when available — A2A server accumulates
-  // conversation history per task (R009/D016). GSD calls newSession()
-  // between workflow steps, which triggers resetTaskContext().
+  // Always pass lastTaskId when available
+  errorLog('stream', `streamSimpleGsd: lastTaskId=${lastTaskId ?? 'none'}`);
   const { stream } = streamSimple({
     prompt,
     context,
@@ -555,6 +553,59 @@ async function handleFreshPrompt(
     }
   }
 
+  // Post-loop: handle native tool approval after SSE stream closed.
+  // The server sends input-required + final=true when tools need approval,
+  // which closes the SSE stream. We detect awaitingApproval here and send
+  // the approval on a new connection. The approval SSE response carries
+  // the tool execution results AND the model's text continuation.
+  const effectiveTaskId = serverTaskId ?? a2aTaskId;
+  const postLoopState = getTaskState(effectiveTaskId);
+  if (postLoopState?.awaitingApproval) {
+    const pendingToolCalls = getPendingToolCalls(effectiveTaskId);
+    const routingDecisions = pendingToolCalls.map(classifyToolRouting);
+    const hasMcpCalls = routingDecisions.some((r) => r.routing === 'mcp');
+    const hasNativeCalls = routingDecisions.some((r) => r.routing === 'native');
+
+    if (hasMcpCalls) {
+      stopReason = 'toolUse';
+    } else if (hasNativeCalls) {
+      errorLog('stream', `Post-loop native approval: ${pendingToolCalls.length} native tools`);
+      for (const toolCall of pendingToolCalls.filter((tc) => isNativeTool(tc.name))) {
+        try {
+          const { sseStream: approveStream } = await approveToolCall({
+            taskId: effectiveTaskId,
+            callId: toolCall.callId,
+            outcome: 'proceed_once',
+            signal,
+          });
+
+          for await (const approveEvent of parseSSEStream(approveStream, { signal })) {
+            errorLog('stream', `Approval SSE: kind=${approveEvent.kind} state=${approveEvent.result?.status?.state} final=${approveEvent.result?.final}`);
+            updateTaskState(effectiveTaskId, approveEvent);
+            const approvePartial = updatePartialMessage(partialMessage, approveEvent);
+            copyPartialMessage(partialMessage, approvePartial);
+            emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([approveEvent]), createMessageMetadata(model));
+
+            const approvedState = getTaskState(effectiveTaskId);
+            if (approvedState?.isTerminal) break;
+            // Check if approval response triggered new MCP tool calls
+            if (approvedState?.awaitingApproval) {
+              const newPending = getPendingToolCalls(effectiveTaskId);
+              if (newPending.some((tc) => isMcpTool(tc.name))) {
+                stopReason = 'toolUse';
+                break;
+              }
+            }
+          }
+        } catch (error) {
+          errorLog('stream', `Native approval failed for ${toolCall.callId}`, error);
+        }
+        if (stopReason === 'toolUse') break;
+      }
+      clearPendingToolCalls(effectiveTaskId, pendingToolCalls.filter((tc) => isNativeTool(tc.name)).map((tc) => tc.callId));
+    }
+  }
+
   // Filter out native tool calls from the FINAL message — they are rendered
   // via nativeToolText (fenced code blocks), not as executable toolCall content.
   // Check both original name and native_ prefixed name.
@@ -609,6 +660,8 @@ async function handleReCall(
   }
 
   const pendingToolCalls = getPendingToolCalls(taskId);
+  const taskState = getTaskState(taskId);
+  errorLog('stream', `handleReCall: taskId=${taskId} taskExists=${!!taskState} pending=${pendingToolCalls.length} tools=${pendingToolCalls.map(t => t.name).join(',')} extractedResults=${extractedResults.length}`);
   if (pendingToolCalls.length === 0) {
     throw new Error('Re-call detected but task has no pending tool calls');
   }

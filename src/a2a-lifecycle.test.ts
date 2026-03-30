@@ -14,7 +14,7 @@ import {
   stopServer,
   __testing__,
 } from './a2a-lifecycle.js';
-import { checkA2AInjectResultPatched, checkA2APendingToolAbortPatched, checkA2AToolCompletionNotifierPatched } from './availability.js';
+import { checkA2AInjectResultPatched, checkA2APendingToolAbortPatched } from './availability.js';
 import { getA2APackageRoot } from './a2a-path.js';
 import { isPortInUse, isServerHealthy } from './port-check.js';
 
@@ -23,7 +23,6 @@ vi.mock('./availability.js', () => ({
   checkA2APatched: vi.fn(),
   checkA2AInjectResultPatched: vi.fn(),
   checkA2APendingToolAbortPatched: vi.fn(),
-  checkA2AToolCompletionNotifierPatched: vi.fn(),
 }));
 
 vi.mock('./a2a-path.js', () => ({
@@ -96,7 +95,6 @@ describe('a2a-lifecycle inject_result patch verification', () => {
       // Mock inject_result patch as missing
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(false);
       vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
-      vi.mocked(checkA2AToolCompletionNotifierPatched).mockReturnValue(true);
       
       // Attempt to start server - should throw
       await expect(startServer()).rejects.toThrowError('inject_result patch not found in A2A bundle');
@@ -146,7 +144,6 @@ describe('a2a-lifecycle inject_result patch verification', () => {
       vi.mocked(checkA2APatched).mockReturnValue(true);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(true);
       vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
-      vi.mocked(checkA2AToolCompletionNotifierPatched).mockReturnValue(true);
 
       // Mock openSync to return a fake fd
       const { openSync } = await import('node:fs');

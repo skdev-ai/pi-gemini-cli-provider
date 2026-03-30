@@ -7,6 +7,13 @@ coverage/
 .gsd/
 .gsd
 RESEARCH-*.md
+ANALYSIS-*.md
+SPIKE-RESULTS.md
+.artifacts/
+.bg-shell/
+.debug/
+tool-schemas.json
+test/
 
 # ── GSD baseline (auto-generated) ──
 .DS_Store

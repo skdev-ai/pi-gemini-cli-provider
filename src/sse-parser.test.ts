@@ -511,12 +511,12 @@ describe('isAwaitingApproval', () => {
     expect(isAwaitingApproval(stateChangeAwaitingApprovalEvent)).toBe(true);
   });
 
-  it('should return false for input-required without final', () => {
+  it('should return true for input-required without final (Patch 5 uses final=false)', () => {
     const event: A2AResult = {
       metadata: { coderAgent: { kind: 'state-change' } },
       status: { state: 'input-required', message: { parts: [] } },
     };
-    expect(isAwaitingApproval(event)).toBe(false);
+    expect(isAwaitingApproval(event)).toBe(true);
   });
 
   it('should return false for final without input-required', () => {

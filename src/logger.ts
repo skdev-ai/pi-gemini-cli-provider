@@ -94,4 +94,34 @@ function writeSessionStartMarker(): void {
 // Write session start marker on module load
 writeSessionStartMarker();
 
+/**
+ * Logs an error to file ALWAYS, regardless of GCS_DEBUG.
+ * Use for errors that are too important to miss.
+ *
+ * @param module - Module name for log prefix
+ * @param message - Error message
+ * @param error - Optional error object for stack trace
+ */
+export function errorLog(module: string, message: string, error?: unknown): void {
+  try {
+    ensureLogDir();
+
+    const timestamp = new Date().toISOString();
+    let logLine = `[${timestamp}] [gcs:${SESSION_ID}:${module}] ERROR: ${message}\n`;
+
+    if (error instanceof Error) {
+      logLine += `[${timestamp}] [gcs:${SESSION_ID}:${module}]   ${error.message}\n`;
+      if (error.stack) {
+        logLine += `[${timestamp}] [gcs:${SESSION_ID}:${module}]   ${error.stack.split('\n').slice(1).join('\n  ')}\n`;
+      }
+    } else if (error !== undefined) {
+      logLine += `[${timestamp}] [gcs:${SESSION_ID}:${module}]   ${String(error)}\n`;
+    }
+
+    appendFileSync(LOG_FILE, logLine);
+  } catch {
+    // Silently fail - never break the app due to logging
+  }
+}
+
 // infoLog() has been removed - use ctx.ui.notify() for visible output or debugLog() for file logging

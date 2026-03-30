@@ -143,9 +143,9 @@ describe('sendMessageStream', () => {
     const callArgs = mockFetch.mock.calls[0];
     const body = JSON.parse(callArgs[1]?.body as string);
     
-    // Verify taskId and contextId are included in request
-    expect(body.params.taskId).toBe(existingTaskId);
-    expect(body.params.contextId).toBe(existingContextId);
+    // Verify taskId and contextId are in the message body (required by DefaultRequestHandler)
+    expect(body.params.message.taskId).toBe(existingTaskId);
+    expect(body.params.message.contextId).toBe(existingContextId);
   });
 
   it('generates new taskId and contextId when not provided', async () => {

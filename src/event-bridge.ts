@@ -18,33 +18,83 @@ import type {
 import { stripMcpPrefix, isNativeTool } from './approval-flow.js';
 
 /**
- * Format native tool info as a fenced code block for GSD's Markdown renderer.
- * Produces exactly the shape that marked v15 tokenizes as a block code token,
- * which GSD's TUI renders with visible fence borders + styled code body.
+ * Strips markdown formatting from a line so it renders as uniform
+ * plain text inside a blockquote. GSD's TUI renderer has no handler
+ * for backslash-escape tokens, so we strip rather than escape.
+ * URLs are preserved intact.
+ */
+/**
+ * Strips markdown formatting from a line so it renders as uniform
+ * plain text inside a blockquote. GSD's TUI renderer has no handler
+ * for backslash-escape tokens, so we strip rather than escape.
+ * URLs are preserved intact.
+ */
+function stripMarkdown(line: string): string {
+  // Pull URLs out before stripping. Two patterns:
+  // 1. (https://...until closing paren) — captures full URL including spaces
+  // 2. https://...until whitespace — bare URLs without parens
+  const urls: string[] = [];
+  const withPlaceholders = line
+    .replace(/\(https?:\/\/[^)]+\)/g, (match) => {
+      // Store URL without wrapping parens
+      urls.push(match.slice(1, -1));
+      return `\x00URL${urls.length - 1}\x00`;
+    })
+    .replace(/https?:\/\/[^\s]+/g, (url) => {
+      // Check it's not already a placeholder
+      if (url.includes('\x00')) return url;
+      urls.push(url);
+      return `\x00URL${urls.length - 1}\x00`;
+    });
+
+  let stripped = withPlaceholders
+    // Remove bold/italic markers
+    .replace(/\*+/g, '')
+    // Remove reference-style link brackets [1] → #1
+    // Can't use "1." (ordered list) or "(1)" (link target)
+    .replace(/\[(\d+)\]/g, '#$1')
+    // Remove other brackets
+    .replace(/[[\]]/g, '')
+    // Remove leading list markers (- or + or * followed by space)
+    .replace(/^(\s*)[-+]\s+/, '$1')
+    // Remove heading markers
+    .replace(/^#+\s*/, '');
+
+  // Restore URLs, encoding spaces as %20
+  stripped = stripped.replace(/\x00URL(\d+)\x00/g, (_, i) => urls[Number(i)].replace(/ /g, '%20'));
+  return stripped;
+}
+
+/**
+ * Format native tool info as heading + blockquote for GSD's Markdown renderer.
+ * Heading renders in teal/cyan, blockquote renders in uniform grey.
  */
 function formatNativeToolText(input: {
   toolName: 'google_web_search' | 'web_fetch';
   args?: Record<string, unknown>;
   responseOutput?: string;
 }): string {
-  const lines: string[] = ['```', input.toolName];
+  // H2 heading renders bold cyan in GSD TUI (H3+ shows ### prefix)
+  const heading = `## native_${input.toolName}`;
+
+  const quoteLines: string[] = [];
 
   const args = input.args ?? {};
   for (const [key, value] of Object.entries(args)) {
     if (value === undefined || value === null || value === '') continue;
     const display = typeof value === 'string' ? value : JSON.stringify(value);
-    lines.push(`${key}: ${display}`);
+    quoteLines.push(`${key}: ${display}`);
   }
 
   const output = input.responseOutput?.trim();
   if (output) {
-    lines.push('');
-    lines.push(input.toolName === 'google_web_search' ? 'Sources:' : 'Result:');
-    lines.push(...output.split('\n'));
+    quoteLines.push('');
+    quoteLines.push(input.toolName === 'google_web_search' ? 'Sources:' : 'Result:');
+    quoteLines.push(...output.split('\n').map(stripMarkdown));
   }
 
-  lines.push('```');
-  return lines.join('\n');
+  const quote = quoteLines.map(line => `> ${line}`).join('\n');
+  return `${heading}\n${quote}`;
 }
 
 // ============================================================================

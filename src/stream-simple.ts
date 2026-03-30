@@ -10,6 +10,8 @@
 import type { Context } from './pi-types.js';
 import { sendMessageStream, injectResult, approveToolCall } from './a2a-client.js';
 import { parseSSEStream } from './sse-parser.js';
+import { errorLog } from './logger.js';
+import { resolveVertexUrls } from './url-resolver.js';
 import {
   createTask,
   createTaskWithIds,
@@ -315,7 +317,8 @@ export function streamSimple(params: StreamSimpleParams): {
     try {
       await incrementProviderTaskCount();
 
-      const isReCall = Boolean(taskId);
+      const isReCall = Boolean(taskId) && detectReCall(context.messages);
+      errorLog('stream', `streamSimple called: taskId=${taskId ?? 'none'} isReCall=${isReCall} prompt=${prompt?.slice(0, 50)}`);
       const result = isReCall
         ? await handleReCall(stream, {
             context,
@@ -333,9 +336,11 @@ export function streamSimple(params: StreamSimpleParams): {
             signal,
           });
 
-      if (!isReCall) {
+      // Always update — server may assign new IDs on any call
+      {
         lastTaskId = result.taskId;
         lastContextId = result.contextId;
+        errorLog('stream', `streamSimple completed: resultTaskId=${result.taskId} stopReason=${result.stopReason}`);
       }
 
       const messageMetadata = createMessageMetadata(model);
@@ -348,6 +353,7 @@ export function streamSimple(params: StreamSimpleParams): {
       resolveResult(result);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      errorLog('stream', `streamSimpleGsd failed: ${errorMessage}`, error);
       emitError(stream, createMessageMetadata(model), errorMessage, signal?.aborted === true ? 'aborted' : 'error');
       rejectResult(new Error(errorMessage));
     }
@@ -400,18 +406,29 @@ export function streamSimpleGsd(
   options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
   const prompt = extractPromptFromContext(context);
-  const isReCall = detectReCall(context.messages);
 
+  // Always pass lastTaskId when available — A2A server accumulates
+  // conversation history per task (R009/D016). GSD calls newSession()
+  // between workflow steps, which triggers resetTaskContext().
   const { stream } = streamSimple({
     prompt,
     context,
     model: model.id,
     signal: options?.signal,
-    taskId: isReCall ? lastTaskId : undefined,
-    contextId: isReCall ? lastContextId : undefined,
+    taskId: lastTaskId,
+    contextId: lastContextId,
   });
 
   return stream;
+}
+
+/**
+ * Resets multi-turn task context. Called on session_switch to ensure
+ * each GSD session gets a fresh A2A task.
+ */
+export function resetTaskContext(): void {
+  lastTaskId = undefined;
+  lastContextId = undefined;
 }
 
 // =============================================================================
@@ -431,15 +448,19 @@ async function handleFreshPrompt(
 ): Promise<StreamSimpleResult> {
   const { prompt, taskId, contextId, model, signal } = params;
 
-  const taskState = taskId && contextId ? createTaskWithIds(taskId, contextId) : createTask();
-
+  // Only send taskId/contextId to A2A server when they came from the server
+  // (multi-turn). On first call, let the server create its own task.
+  // Local task state is created after we get the server's IDs.
   const { taskId: a2aTaskId, contextId: a2aContextId, sseStream } = await sendMessageStream({
     prompt,
-    taskId: taskState.taskId,
-    contextId: taskState.contextId,
+    taskId,
+    contextId,
     model,
     signal,
   });
+
+  // Create local task state with the IDs returned by sendMessageStream
+  createTaskWithIds(a2aTaskId, a2aContextId);
 
   const partialMessage = createPartialMessage();
   const eventState = createStreamEventState();
@@ -461,7 +482,11 @@ async function handleFreshPrompt(
       }
     }
 
-    updateTaskState(serverTaskId ?? a2aTaskId, event);
+    errorLog('stream', `SSE event: kind=${event.kind} state=${event.result?.status?.state} final=${event.result?.final} isAwait=${event.isAwaitingApproval} hasToolCall=${!!event.toolCall}`);
+    const stateAfter = updateTaskState(serverTaskId ?? a2aTaskId, event);
+    if (stateAfter) {
+      errorLog('stream', `  taskState: awaiting=${stateAfter.awaitingApproval} pending=${stateAfter.pendingToolCalls.length} state=${stateAfter.state}`);
+    }
     const nextPartial = updatePartialMessage(partialMessage, event);
     copyPartialMessage(partialMessage, nextPartial);
     emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([event]), createMessageMetadata(model));
@@ -469,6 +494,8 @@ async function handleFreshPrompt(
     const effectiveTaskId = serverTaskId ?? a2aTaskId;
     const updatedState = getTaskState(effectiveTaskId);
     if (updatedState?.awaitingApproval) {
+      const _pending = getPendingToolCalls(effectiveTaskId);
+      errorLog('stream', `awaitingApproval detected! pendingToolCalls=${_pending.length} tools=${_pending.map(t => t.name).join(',')}`);
       const pendingToolCalls = getPendingToolCalls(effectiveTaskId);
 
       if (pendingToolCalls.length > 0) {
@@ -501,12 +528,21 @@ async function handleFreshPrompt(
                 if (approvedState?.isTerminal) {
                   break;
                 }
+                // Check if native tool response triggered new MCP tool calls
+                if (approvedState?.awaitingApproval) {
+                  const newPending = getPendingToolCalls(effectiveTaskId);
+                  if (newPending.some((tc) => isMcpTool(tc.name))) {
+                    stopReason = 'toolUse';
+                    break;
+                  }
+                }
               }
             } catch (error) {
               const errorMessage = error instanceof Error ? error.message : 'Auto-approval failed';
               markTaskFailed(effectiveTaskId, errorMessage);
               throw new Error(`Failed to auto-approve native tool ${toolCall.callId}: ${errorMessage}`);
             }
+            if (stopReason === 'toolUse') break;
           }
 
           clearPendingToolCalls(effectiveTaskId, pendingToolCalls.map((tc) => tc.callId));
@@ -526,10 +562,13 @@ async function handleFreshPrompt(
     (call) => !isNativeTool(call.name) && !call.name.startsWith('native_')
   );
 
+  // Resolve vertex grounding redirect URLs in native tool text
+  const resolvedNativeToolText = await resolveVertexUrls(partialMessage.nativeToolText);
+
   const finalMessage = {
     text: partialMessage.text,
     thinking: partialMessage.thinking,
-    nativeToolText: partialMessage.nativeToolText,
+    nativeToolText: resolvedNativeToolText,
     toolCalls: mcpToolCalls.map((call) => ({
       callId: call.id,
       name: call.name,
@@ -608,9 +647,39 @@ async function handleReCall(
           const newPending = getPendingToolCalls(taskId).filter(
             (tc) => !injectedCallIds.includes(tc.callId)
           );
-          if (newPending.some((tc) => isMcpTool(tc.name))) {
+
+          const routingDecisions = newPending.map(classifyToolRouting);
+          const hasMcpCalls = routingDecisions.some((r) => r.routing === 'mcp');
+          const hasNativeCalls = routingDecisions.some((r) => r.routing === 'native');
+
+          if (hasMcpCalls) {
             stopReason = 'toolUse';
             break;
+          }
+
+          // Auto-approve native tools (same as handleFreshPrompt)
+          if (hasNativeCalls && !hasMcpCalls) {
+            for (const tc of newPending.filter((t) => isNativeTool(t.name))) {
+              try {
+                const { sseStream: approveStream } = await approveToolCall({
+                  taskId,
+                  callId: tc.callId,
+                  outcome: 'proceed_once',
+                  signal,
+                });
+                for await (const approveEvent of parseSSEStream(approveStream, { signal })) {
+                  updateTaskState(taskId, approveEvent);
+                  const approvePartial = updatePartialMessage(partialMessage, approveEvent);
+                  copyPartialMessage(partialMessage, approvePartial);
+                  emitTranslatedEvents(stream, eventState, partialMessage, translateEvents([approveEvent]), createMessageMetadata(model));
+                  const approvedState = getTaskState(taskId);
+                  if (approvedState?.isTerminal) break;
+                }
+              } catch {
+                // Native approval failed — continue, don't block
+              }
+            }
+            clearPendingToolCalls(taskId, newPending.filter((t) => isNativeTool(t.name)).map((t) => t.callId));
           }
         }
         if (injectState?.isTerminal) {
@@ -633,15 +702,26 @@ async function handleReCall(
   if (updatedState?.awaitingApproval) {
     const morePendingCalls = getPendingToolCalls(taskId);
     if (morePendingCalls.length > 0) {
-      stopReason = 'toolUse';
+      const moreRouting = morePendingCalls.map(classifyToolRouting);
+      if (moreRouting.some((r) => r.routing === 'mcp')) {
+        stopReason = 'toolUse';
+      }
     }
   }
+
+  // Resolve vertex grounding redirect URLs in native tool text
+  const resolvedNativeToolText = await resolveVertexUrls(partialMessage.nativeToolText);
+
+  // Filter native tools from toolCalls (rendered via nativeToolText instead)
+  const mcpToolCalls = partialMessage.toolCalls.filter(
+    (call) => !isNativeTool(call.name) && !call.name.startsWith('native_')
+  );
 
   const finalMessage = {
     text: partialMessage.text,
     thinking: partialMessage.thinking,
-    nativeToolText: partialMessage.nativeToolText,
-    toolCalls: partialMessage.toolCalls.map((call) => ({
+    nativeToolText: resolvedNativeToolText,
+    toolCalls: mcpToolCalls.map((call) => ({
       callId: call.id,
       name: call.name,
       args: call.arguments,

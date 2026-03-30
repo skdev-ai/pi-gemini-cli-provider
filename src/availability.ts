@@ -135,10 +135,26 @@ export function checkA2APendingToolAbortPatched(filePath: string): boolean {
 }
 
 /**
+ * Checks if the A2A server bundle has Patch 5 applied:
+ * checkInputRequiredState() must NOT resolve toolCompletionNotifier prematurely.
+ *
+ * @param filePath - Path to the A2A server file to check
+ * @returns true if the patch is present
+ */
+export function checkA2AToolCompletionNotifierPatched(filePath: string): boolean {
+  try {
+    const content = readFileSync(filePath, 'utf-8');
+    return content.includes('PATCH5:');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Checks if the A2A server bundle has been patched with inject_result support.
  * Wrapper around checkInjectResultPatched() that resolves the A2A package root
  * and constructs the bundle path automatically.
- * 
+ *
  * @returns true if inject_result patch is present, false otherwise
  */
 export function checkA2AInjectResultPatched(): boolean {

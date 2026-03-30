@@ -9,6 +9,7 @@
  * The method field in the JSON-RPC body specifies the operation.
  */
 
+import { errorLog } from './logger.js';
 import type {
   A2AStreamRequest,
   A2AInjectResultRequest,
@@ -165,14 +166,14 @@ export async function sendMessageStream(
         role: 'user',
         parts: [{ kind: 'text', text: prompt }],
         messageId: requestId,
+        ...(taskId && { taskId }),
+        ...(contextId && { contextId }),
         ...(model && {
           metadata: {
             _model: model,
           },
         }),
       },
-      ...(taskId && { taskId }),
-      ...(contextId && { contextId }),
     },
   };
 
@@ -188,14 +189,19 @@ export async function sendMessageStream(
     });
 
     if (!response.ok) {
+      const body = typeof response.text === 'function'
+        ? await response.text().catch(() => '<unreadable>')
+        : '<no text method>';
+      errorLog('a2a-client', `sendMessageStream HTTP ${response.status}: ${body}`);
       throw createTransportError(
         'HTTP_ERROR',
-        `A2A server responded with status ${response.status}`,
+        `A2A server responded with status ${response.status}: ${body}`,
         { url }
       );
     }
 
     if (!response.body) {
+      errorLog('a2a-client', 'sendMessageStream: response has no body');
       throw createTransportError('PARSE_ERROR', 'A2A response has no body');
     }
 
@@ -209,6 +215,7 @@ export async function sendMessageStream(
       },
     };
   } catch (error) {
+    errorLog('a2a-client', `sendMessageStream failed`, error);
     throw mapFetchErrorToTransportError(error, url);
   }
 }

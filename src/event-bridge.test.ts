@@ -815,11 +815,15 @@ describe('unified rendering', () => {
     // Only MCP tools in toolCalls — native tools go to nativeToolText
     expect(partial.toolCalls).toHaveLength(1);
     expect(partial.toolCalls[0].name).toBe('read');
-    // Native tool rendered as fenced code block in nativeToolText
-    expect(partial.nativeToolText).toContain('web_fetch');
+    // Native tool rendered as heading + blockquote in nativeToolText
+    expect(partial.nativeToolText).toMatch(/^## native_web_fetch\n/);
     expect(partial.nativeToolText).toContain('prompt: test');
     expect(partial.nativeToolText).toContain('Result text');
-    expect(partial.nativeToolText).toMatch(/^```\n/);
-    expect(partial.nativeToolText).toMatch(/\n```$/);
+    // Blockquote lines follow the heading
+    const lines = partial.nativeToolText.split('\n');
+    expect(lines[0]).toMatch(/^## /);
+    for (const line of lines.slice(1)) {
+      expect(line).toMatch(/^> /);
+    }
   });
 });

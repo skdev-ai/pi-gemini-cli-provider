@@ -12,10 +12,11 @@
  */
 
 import { spawn, type ChildProcess, exec } from 'node:child_process';
+import { openSync } from 'node:fs';
 import { promisify } from 'node:util';
 import type { A2AServerState, SearchError } from './types.js';
 import { getA2APackageRoot } from './a2a-path.js';
-import { checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched } from './availability.js';
+import { checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched, checkA2AToolCompletionNotifierPatched } from './availability.js';
 import { isPortInUse, isServerHealthy } from './port-check.js';
 import { debugLog } from './logger.js';
 import { resolveWorkspacePath } from './workspace-generator.js';
@@ -72,7 +73,7 @@ const A2A_PORT = 41242;
 const STARTUP_TIMEOUT_MS = 30000; // 30s timeout (12s boot + generous margin)
 const RING_BUFFER_MAX = 50;
 const TASK_COUNT_RESTART_THRESHOLD = 1000;
-const READY_MARKER = 'Agent Server started';
+// Readiness now detected via health check polling, not stdout marker
 
 // ============================================================================
 // State
@@ -304,13 +305,12 @@ export async function startServer(config?: A2AStartupConfig): Promise<void> {
       const hasPatch2 = checkA2APatched(serverPath);
       const hasPatch3 = checkA2AInjectResultPatched();
       const hasPatch4 = checkA2APendingToolAbortPatched(serverPath);
-      
-      if (!hasPatch2 || !hasPatch3 || !hasPatch4) {
-        log(`Warning: Reusing server but patches missing (Patch2: ${hasPatch2}, Patch3: ${hasPatch3}, Patch4: ${hasPatch4})`);
-        // Don't throw here - let the server run but log the warning
-        // The caller can decide whether to restart
+      const hasPatch5 = checkA2AToolCompletionNotifierPatched(serverPath);
+
+      if (!hasPatch2 || !hasPatch3 || !hasPatch4 || !hasPatch5) {
+        log(`Warning: Reusing server but patches missing (Patch2: ${hasPatch2}, Patch3: ${hasPatch3}, Patch4: ${hasPatch4}, Patch5: ${hasPatch5})`);
       } else {
-        log('Required patches (Patch 2, Patch 3, and Patch 4) verified on running server');
+        log('Required patches (Patch 2-5) verified on running server');
       }
     }
     
@@ -365,11 +365,20 @@ export async function startServer(config?: A2AStartupConfig): Promise<void> {
         throw createSearchError('A2A_PENDING_TOOL_ABORT_NOT_PATCHED', 'pending-tool abort preservation patch not found in A2A bundle');
       }
 
-      // Spawn the server process using node directly with the bundle path
-      // This avoids the isMainModule check failure that occurs when spawning
-      // via 'gemini-cli-a2a-server' symlink (basenames don't match)
+      if (!checkA2AToolCompletionNotifierPatched(serverPath)) {
+        throw createSearchError('A2A_TOOL_COMPLETION_NOTIFIER_NOT_PATCHED', 'toolCompletionNotifier patch not found in A2A bundle');
+      }
+
+      // Spawn fully detached: stdio to log files, no pipes to parent.
+      // This ensures the server survives parent GSD exit — open pipes
+      // keep a parent-child link that delivers SIGHUP on exit.
+      const debug = process.env.GCS_DEBUG === '1';
+      const stdoutFd = openSync(debug ? '/tmp/a2a-server-stdout.log' : '/dev/null', 'w');
+      const stderrFd = openSync(debug ? '/tmp/a2a-server-stderr.log' : '/dev/null', 'w');
+
       childProcess = spawn('node', [serverPath], {
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['ignore', stdoutFd, stderrFd],
+        detached: true,
         env: {
           ...process.env,
           USE_CCPA: '1',
@@ -379,156 +388,44 @@ export async function startServer(config?: A2AStartupConfig): Promise<void> {
         },
       });
 
-      let readyResolved = false;
-      let startupTimeoutId: NodeJS.Timeout | null = null;
+      // Fully detach — no pipes, no exit handler, no reference.
+      childProcess.unref();
+      log(`Spawned server PID ${childProcess.pid}, polling for readiness...`);
 
-      // Set up 30s timeout for readiness (12s boot + generous margin)
-      const timeoutPromise = new Promise<void>((_, reject) => {
-        startupTimeoutId = setTimeout(() => {
-          if (!readyResolved) {
-            log('Startup timeout reached, killing process');
-            if (childProcess && childProcess.pid) {
-              childProcess.kill('SIGKILL');
-            }
-            updateState({ 
-              status: 'error',
-              lastError: createSearchError('A2A_STARTUP_TIMEOUT', `Server did not start within ${STARTUP_TIMEOUT_MS}ms`)
-            });
-            reject(createSearchError('A2A_STARTUP_TIMEOUT', `Server did not start within ${STARTUP_TIMEOUT_MS}ms`));
-          }
-        }, STARTUP_TIMEOUT_MS);
-      });
-
-      // Promise that resolves when ready marker is seen
-      const readyPromise = new Promise<void>((resolve, reject) => {
-        // Ensure childProcess is set before attaching listeners
-        if (!childProcess) {
-          reject(createSearchError('A2A_STARTUP_TIMEOUT', 'Child process not created'));
-          return;
+      // Poll health endpoint until ready or timeout
+      const startWait = Date.now();
+      let ready = false;
+      while (Date.now() - startWait < STARTUP_TIMEOUT_MS) {
+        await new Promise((r) => setTimeout(r, 500));
+        if (await isServerHealthy(port)) {
+          ready = true;
+          break;
         }
+      }
 
-        // Handle stdout - look for ready marker
-        childProcess.stdout?.on('data', (data: Buffer) => {
-          const lines = data.toString().split('\n');
-          for (const line of lines) {
-            if (line.trim()) {
-              pushToRingBuffer(serverState.stdoutBuffer, line);
-              log(`stdout: ${line}`);
-              
-              // Check for ready marker
-              if (line.includes(READY_MARKER) && !readyResolved) {
-                readyResolved = true;
-                if (startupTimeoutId) clearTimeout(startupTimeoutId);
-                
-                // Mark as running
-                startTime = Date.now();
-                updateState({ 
-                  status: 'running',
-                  uptime: 0,
-                });
-                
-                // Start uptime timer
-                uptimeTimer = setInterval(() => {
-                  if (startTime && serverState.status === 'running') {
-                    updateState({ uptime: Date.now() - startTime });
-                  }
-                }, 1000);
-                
-                // Attach persistent exit handler for runtime crashes
-                if (childProcess) {
-                  childProcess.on('exit', (code, signal) => {
-                    if (serverState.status === 'running') {
-                      log(`Server crashed unexpectedly with code ${code}, signal ${signal}`);
-                      handleExit(code, signal);
-                    }
-                  });
-                }
-                
-                log('Server is now running');
-                resolve();
-              }
-            }
-          }
+      if (!ready) {
+        // Server didn't start — kill it
+        try { process.kill(childProcess.pid!, 'SIGKILL'); } catch { /* already dead */ }
+        childProcess = null;
+        updateState({
+          status: 'error',
+          lastError: createSearchError('A2A_STARTUP_TIMEOUT', `Server did not start within ${STARTUP_TIMEOUT_MS}ms`),
         });
+        throw createSearchError('A2A_STARTUP_TIMEOUT', `Server did not start within ${STARTUP_TIMEOUT_MS}ms`);
+      }
 
-        // Handle stderr - look for auth errors
-        childProcess.stderr?.on('data', (data: Buffer) => {
-          const lines = data.toString().split('\n');
-          for (const line of lines) {
-            if (line.trim()) {
-              pushToRingBuffer(serverState.stderrBuffer, line);
-              log(`stderr: ${line}`);
-              
-              // Check for authentication errors
-              if (line.includes('FatalAuthenticationError') || line.includes('OAuth token expired')) {
-                if (!readyResolved) {
-                  readyResolved = true;
-                  if (startupTimeoutId) clearTimeout(startupTimeoutId);
-                  
-                  updateState({ 
-                    status: 'error',
-                    lastError: createSearchError('A2A_AUTH_EXPIRED', `Authentication error: ${line}`)
-                  });
-                  reject(createSearchError('A2A_AUTH_EXPIRED', `Authentication error: ${line}`));
-                }
-              } else if (line.includes('Interactive terminal required')) {
-                if (!readyResolved) {
-                  readyResolved = true;
-                  if (startupTimeoutId) clearTimeout(startupTimeoutId);
-                  
-                  updateState({ 
-                    status: 'error',
-                    lastError: createSearchError('A2A_HEADLESS_MISSING', `Headless mode error: ${line}`)
-                  });
-                  reject(createSearchError('A2A_HEADLESS_MISSING', `Headless mode error: ${line}`));
-                }
-              }
-            }
-          }
-        });
+      // Mark as running
+      startTime = Date.now();
+      updateState({ status: 'running', uptime: 0 });
 
-        // Handle process exit during startup
-        childProcess.on('exit', (code, signal) => {
-          if (!readyResolved) {
-            readyResolved = true;
-            if (startupTimeoutId) clearTimeout(startupTimeoutId);
-            
-            updateState({ 
-              status: 'stopped',
-              exitCode: code,
-              lastError: createSearchError('A2A_CRASHED', `Server exited with code ${code}, signal ${signal}`)
-            });
-            
-            reject(createSearchError('A2A_CRASHED', `Server exited with code ${code}, signal ${signal}`));
-          }
-        });
+      // Start uptime timer
+      uptimeTimer = setInterval(() => {
+        if (startTime && serverState.status === 'running') {
+          updateState({ uptime: Date.now() - startTime });
+        }
+      }, 1000);
 
-        // Handle spawn errors (e.g., binary not found)
-        childProcess.on('error', (err: NodeJS.ErrnoException) => {
-          if (!readyResolved) {
-            readyResolved = true;
-            if (startupTimeoutId) clearTimeout(startupTimeoutId);
-            
-            let errorType: SearchError['type'] = 'A2A_STARTUP_TIMEOUT';
-            let errorMessage = `Failed to spawn server: ${err.message}`;
-            
-            if (err.code === 'ENOENT') {
-              errorType = 'A2A_NOT_INSTALLED';
-              errorMessage = 'gemini-cli-a2a-server binary not found. Please install with: npm install -g @google/gemini-cli-a2a-server';
-            }
-            
-            updateState({ 
-              status: 'error',
-              lastError: createSearchError(errorType, errorMessage)
-            });
-            
-            reject(createSearchError(errorType, errorMessage));
-          }
-        });
-      });
-
-      // Race between ready and timeout
-      await Promise.race([readyPromise, timeoutPromise]);
+      log(`Server is now running (detached, PID ${childProcess.pid})`);
       
     } catch (error) {
       // Update state to error
@@ -667,20 +564,14 @@ export async function incrementSearchCount(): Promise<void> {
   updateState({ searchCount: newCount });
   log(`Search count incremented to ${newCount}`);
 
-  // Check if restart is needed
-  if (newCount >= TASK_COUNT_RESTART_THRESHOLD) {
-    log(`Search count reached ${TASK_COUNT_RESTART_THRESHOLD}, triggering restart`);
-    
-    // Stop the server
+  // Check combined total — InMemoryTaskStore leaks ALL tasks regardless of source
+  const totalTasks = newCount + serverState.providerTaskCount;
+  if (totalTasks >= TASK_COUNT_RESTART_THRESHOLD) {
+    log(`Combined task count reached ${totalTasks} (threshold: ${TASK_COUNT_RESTART_THRESHOLD}), triggering restart`);
     await stopServer();
-    
-    // Reset counter
-    updateState({ searchCount: 0 });
-    
-    // Restart the server
+    updateState({ searchCount: 0, providerTaskCount: 0 });
     await startServer();
-    
-    log('Server restarted with search count reset to 0');
+    log('Server restarted with all counters reset to 0');
   }
 }
 
@@ -708,20 +599,14 @@ export async function incrementProviderTaskCount(): Promise<void> {
   updateState({ providerTaskCount: newCount });
   log(`Provider task count incremented to ${newCount}`);
 
-  // Check if restart is needed
-  if (newCount >= TASK_COUNT_RESTART_THRESHOLD) {
-    log(`Provider task count reached ${TASK_COUNT_RESTART_THRESHOLD}, triggering restart`);
-    
-    // Stop the server
+  // Check combined total — InMemoryTaskStore leaks ALL tasks regardless of source
+  const totalTasks = newCount + serverState.searchCount;
+  if (totalTasks >= TASK_COUNT_RESTART_THRESHOLD) {
+    log(`Combined task count reached ${totalTasks} (threshold: ${TASK_COUNT_RESTART_THRESHOLD}), triggering restart`);
     await stopServer();
-    
-    // Reset counter
-    updateState({ providerTaskCount: 0 });
-    
-    // Restart the server
+    updateState({ searchCount: 0, providerTaskCount: 0 });
     await startServer();
-    
-    log('Server restarted with provider task count reset to 0');
+    log('Server restarted with all counters reset to 0');
   }
 }
 

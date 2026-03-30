@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync, rmSync, chmodSync } from 'node
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getA2APath, getA2APackageRoot } from './a2a-path.js';
-import { checkA2AInstalled, checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched } from './availability.js';
+import { checkA2AInstalled, checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched, checkA2AToolCompletionNotifierPatched } from './availability.js';
 import { applyInjectResultPatch } from './inject-result-patch.js';
 import { generateWorkspace } from './workspace-generator.js';
 
@@ -82,17 +82,19 @@ function preCheck(ctx: InstallerContext): boolean {
       const hasPatch2 = checkA2APatched(a2aPath);
       const hasPatch3 = checkA2AInjectResultPatched();
       const hasPatch4 = checkA2APendingToolAbortPatched(a2aPath);
-      
-      if (hasPatch1 && hasPatch2 && hasPatch3 && hasPatch4) {
-        ctx.ui.notify('A2A already installed and patched with all 4 patches');
+      const hasPatch5 = checkA2AToolCompletionNotifierPatched(a2aPath);
+
+      if (hasPatch1 && hasPatch2 && hasPatch3 && hasPatch4 && hasPatch5) {
+        ctx.ui.notify('A2A already installed and patched with all 5 patches');
         return false; // Signal that installation should skip (idempotent)
       }
-      
+
       const missingPatches = [];
       if (!hasPatch1) missingPatches.push('Patch 1 (headless)');
       if (!hasPatch2) missingPatches.push('Patch 2 (_model)');
       if (!hasPatch3) missingPatches.push('Patch 3 (inject_result)');
       if (!hasPatch4) missingPatches.push('Patch 4 (preserve pending tools on input-required abort)');
+      if (!hasPatch5) missingPatches.push('Patch 5 (toolCompletionNotifier)');
       
       ctx.ui.notify(`A2A installed but missing: ${missingPatches.join(', ')}, re-applying...`);
       return true; // Proceed to apply missing patches
@@ -319,7 +321,33 @@ function applyPatches(ctx: InstallerContext): void {
       const patch4Replacement = `        if (!abortController.signal.aborted) {\n          try {\n            if (typeof currentTask !== "undefined" && currentTask && currentTask.taskState === "input-required") {\n              logger.info("[CoderAgentExecutor] Socket closed while task " + taskId + " awaits input. Preserving pending tools.");\n              return;\n            }\n          } catch (e) {\n            logger.info("[CoderAgentExecutor] Socket closed before task initialized for " + taskId + ". Skipping abort.");\n            return;\n          }\n          abortController.abort();\n        }`;
       writeFileSync(a2aPath, contentWithPatch3.replace(patch4Target, patch4Replacement), 'utf-8');
     }
-    
+
+    // Patch 5: In checkInputRequiredState, change final=true to final=false (keep
+    // SSE stream open) and remove toolCompletionNotifier.resolve() (keep execute
+    // loop alive). Without this, the SSE stream closes and the execute loop exits
+    // before the tool executes, losing the model's response after native tool results.
+    const contentForPatch5 = readFileSync(a2aPath, 'utf-8');
+    const patch5Marker = '/* PATCH5:';
+    if (!contentForPatch5.includes(patch5Marker)) {
+      const patch5Target = [
+        '        /*final*/',
+        '        true',
+        '      );',
+        '      if (!wasAlreadyInputRequired && this.toolCompletionNotifier) {',
+        '        this.toolCompletionNotifier.resolve();',
+        '      }',
+      ].join('\n');
+      if (!contentForPatch5.includes(patch5Target)) {
+        throw new Error('Patch target not found: checkInputRequiredState final+toolCompletionNotifier');
+      }
+      const patch5Replacement = [
+        '        /* PATCH5: final=false keeps SSE open, notifier removed keeps loop alive */',
+        '        false',
+        '      );',
+      ].join('\n');
+      writeFileSync(a2aPath, contentForPatch5.replace(patch5Target, patch5Replacement), 'utf-8');
+    }
+
     // Restore execute permission — writeFileSync creates files as 644
     chmodSync(a2aPath, 0o755);
 
@@ -423,7 +451,6 @@ function verifyPatches(ctx: InstallerContext): void {
 
     // Verify Patch 4
     if (!checkA2APendingToolAbortPatched(a2aPath)) {
-      // Restore backup
       if (existsSync(a2aPath + '.bak')) {
         const backupContent = readFileSync(a2aPath + '.bak', 'utf-8');
         writeFileSync(a2aPath, backupContent, 'utf-8');
@@ -433,7 +460,19 @@ function verifyPatches(ctx: InstallerContext): void {
       }
       throw new Error('Patch verification failed: pending-tool abort preservation not applied');
     }
-    
+
+    // Verify Patch 5
+    if (!checkA2AToolCompletionNotifierPatched(a2aPath)) {
+      if (existsSync(a2aPath + '.bak')) {
+        const backupContent = readFileSync(a2aPath + '.bak', 'utf-8');
+        writeFileSync(a2aPath, backupContent, 'utf-8');
+      }
+      if (existsSync(a2aPath + '.bak.version')) {
+        rmSync(a2aPath + '.bak.version');
+      }
+      throw new Error('Patch verification failed: toolCompletionNotifier patch not applied');
+    }
+
     ctx.ui.notify('Patches applied and verified successfully');
   } catch (error: any) {
     if (error instanceof A2AInstallationError) {

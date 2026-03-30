@@ -14,7 +14,8 @@ import { writeToolSchemas } from './tool-schema-writer.js';
 import { registerGeminiProvider } from './provider-registration.js';
 import { handleGeminiCliCommand } from './gemini-cli-command.js';
 import { startServer, resetManualStopFlag } from './a2a-lifecycle.js';
-import { checkA2AInstalled, checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched } from './availability.js';
+import { resetTaskContext } from './stream-simple.js';
+import { checkA2AInstalled, checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched, checkA2AToolCompletionNotifierPatched } from './availability.js';
 import { getA2APackageRoot } from './a2a-path.js';
 import { join } from 'node:path';
 
@@ -206,8 +207,9 @@ export default async function(pi: ExtensionAPI) {
     const isPatched = bundlePath ? checkA2APatched(bundlePath) : false;
     const isInjectResultPatched = checkA2AInjectResultPatched();
     const isPendingToolAbortPatched = bundlePath ? checkA2APendingToolAbortPatched(bundlePath) : false;
+    const isToolCompletionNotifierPatched = bundlePath ? checkA2AToolCompletionNotifierPatched(bundlePath) : false;
 
-    if (isInstalled && isPatched && isInjectResultPatched && isPendingToolAbortPatched) {
+    if (isInstalled && isPatched && isInjectResultPatched && isPendingToolAbortPatched && isToolCompletionNotifierPatched) {
       // Fire-and-forget startup with user notification on failure
       startServer().catch(err => {
         const message = err instanceof Error ? err.message : String(err);
@@ -215,5 +217,12 @@ export default async function(pi: ExtensionAPI) {
       });
     }
   });
-  
+
+  // Reset multi-turn task context on session switch (new session / /clear).
+  // Each GSD session gets a fresh A2A task — the A2A server accumulates
+  // conversation history per task within a session (R009/D016).
+  pi.on('session_switch', () => {
+    resetTaskContext();
+  });
+
 }

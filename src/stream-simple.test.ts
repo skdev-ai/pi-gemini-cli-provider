@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { streamSimple, streamSimpleGsd, type AssistantMessageEvent } from './stream-simple.js';
+import { streamSimple, streamSimpleGsd, resetTaskContext, type AssistantMessageEvent } from './stream-simple.js';
 import { sendMessageStream, injectResult, approveToolCall } from './a2a-client.js';
 import { parseSSEStream } from './sse-parser.js';
 import {
@@ -193,10 +193,11 @@ describe('streamSimple', () => {
     const finalResult = await result;
 
     expect(typeof (stream as any)[Symbol.asyncIterator]).toBe('function');
+    // First call: no taskId/contextId sent — server creates its own
     expect(mockSendMessageStream).toHaveBeenCalledWith({
       prompt: 'Test prompt',
-      taskId: mockTaskId,
-      contextId: mockContextId,
+      taskId: undefined,
+      contextId: undefined,
       model: undefined,
       signal: undefined,
     });
@@ -620,7 +621,7 @@ describe('streamSimple', () => {
     });
   });
 
-  it('treats provided taskId/contextId as authoritative re-call routing', async () => {
+  it('treats provided taskId/contextId as re-call when toolResult is last message', async () => {
     const mockTaskId = 'task_direct_recall';
     const mockContextId = 'ctx_direct_recall';
 
@@ -653,6 +654,7 @@ describe('streamSimple', () => {
       isTerminal: true,
     });
 
+    // toolResult must be the LAST message for detectReCall to trigger
     const { stream, result } = streamSimple({
       prompt: 'ignored for recall routing',
       context: {
@@ -665,7 +667,6 @@ describe('streamSimple', () => {
             isError: false,
             content: [{ type: 'text', text: 'value' }],
           },
-          { role: 'assistant', content: [] },
         ],
       } as any,
       taskId: mockTaskId,
@@ -733,18 +734,18 @@ describe('streamSimple', () => {
     });
 
     const events = await collectEvents(stream);
-    const finalResult = await result;
+    await result;
 
     expect(mockSendMessageStream).toHaveBeenCalledTimes(1);
+    // No taskId passed as param → fresh prompt, no IDs sent to server
     expect(mockSendMessageStream).toHaveBeenCalledWith({
       prompt: 'Second prompt',
-      taskId: mockTaskId,
-      contextId: mockContextId,
+      taskId: undefined,
+      contextId: undefined,
       model: undefined,
       signal: undefined,
     });
     expect(mockInjectResult).not.toHaveBeenCalled();
-    expect(finalResult.taskId).toBe(mockTaskId);
     expect(events.at(-1)).toMatchObject({
       type: 'done',
       reason: 'stop',
@@ -920,6 +921,7 @@ describe('streamSimpleGsd', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockClearAllTasks();
+    resetTaskContext();
     mockIncrementProviderTaskCount.mockResolvedValue();
   });
 
@@ -968,10 +970,11 @@ describe('streamSimpleGsd', () => {
 
     await collectEvents(stream);
 
+    // First call in session: no taskId sent (server creates task)
     expect(mockSendMessageStream).toHaveBeenCalledWith({
       prompt: 'Hello. What model are you?',
-      taskId: 'task_user_blocks',
-      contextId: 'ctx_user_blocks',
+      taskId: undefined,
+      contextId: undefined,
       model: 'gemini-a2a',
       signal: undefined,
     });
@@ -1037,10 +1040,11 @@ describe('streamSimpleGsd', () => {
 
     await collectEvents(stream);
 
+    // First call in session: no taskId sent (server creates task)
     expect(mockSendMessageStream).toHaveBeenCalledWith({
       prompt: 'Latest user prompt',
-      taskId: 'task_trailing_assistant',
-      contextId: 'ctx_trailing_assistant',
+      taskId: undefined,
+      contextId: undefined,
       model: 'gemini-a2a',
       signal: undefined,
     });

@@ -9,6 +9,7 @@
 
 import { createParser, type EventSourceMessage } from 'eventsource-parser';
 import type { A2AResult, ParsedA2AEvent, ToolCallMetadata } from './types.js';
+import { errorLog } from './logger.js';
 
 // ============================================================================
 // Constants
@@ -112,6 +113,7 @@ export async function* parseSSEStream(
         done = true;
       } else {
         parseError = err instanceof Error ? err : new Error(String(err));
+        errorLog('sse-parser', `SSE stream error: ${parseError.message}`, err);
         done = true;
       }
       notify();
@@ -301,7 +303,9 @@ export function extractToolCall(result: A2AResult): ToolCallMetadata | null {
  * @returns True if task is awaiting approval
  */
 export function isAwaitingApproval(result: A2AResult): boolean {
-  return result.status?.state === 'input-required' && result.final === true;
+  // Patch 5 changed final to false to keep SSE stream open,
+  // so we detect approval from state alone (not final flag).
+  return result.status?.state === 'input-required';
 }
 
 /**

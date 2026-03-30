@@ -3,17 +3,18 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { installA2AServer, type InstallerContext } from './a2a-installer.js';
 import { getA2APath, getA2APackageRoot } from './a2a-path.js';
-import { checkA2AInstalled, checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched } from './availability.js';
+import { checkA2AInstalled, checkA2APatched, checkA2AInjectResultPatched, checkA2APendingToolAbortPatched, checkA2AToolCompletionNotifierPatched } from './availability.js';
 import { applyInjectResultPatch } from './inject-result-patch.js';
 
-const UNPATCHED = "function isHeadlessMode(options) {\n  return options?.headless ?? false;\n}\nconst currentTask = wrapper.task;\n} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n}\n        if (!abortController.signal.aborted) {\n          abortController.abort();\n        }\nif (abortSignal.aborted) {\n                logger.warn(`[CoderAgentExecutor] Task ${taskId} execution aborted.`);\n                currentTask.cancelPendingTools(\"Execution aborted\");\n            }";
-const PATCHED = "function isHeadlessMode(options) { return false;\n  return options?.headless ?? false;\n}\nconst currentTask = wrapper.task; const _requestedModel = x;\n} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n} else if (outcomeString === 'inject_result') {\n  // PATCH: inject_result support (pi-gemini-cli-provider)\n  return true;\n}\n        if (!abortController.signal.aborted) {\n          if (typeof currentTask !== \"undefined\" && currentTask && currentTask.taskState === \"input-required\") {\n            logger.info(\"[CoderAgentExecutor] Socket closed while task \" + taskId + \" awaits input. Preserving pending tools.\");\n          }\n          else {\n            abortController.abort();\n          }\n        }\nif (abortSignal.aborted) {\n                logger.warn(`[CoderAgentExecutor] Task ${taskId} execution aborted.`);\n                currentTask.cancelPendingTools(\"Execution aborted\");\n            }";
+const UNPATCHED = "function isHeadlessMode(options) {\n  return options?.headless ?? false;\n}\nconst currentTask = wrapper.task;\n} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n}\n        if (!abortController.signal.aborted) {\n          abortController.abort();\n        }\n        /*final*/\n        true\n      );\n      if (!wasAlreadyInputRequired && this.toolCompletionNotifier) {\n        this.toolCompletionNotifier.resolve();\n      }\nif (abortSignal.aborted) {\n                logger.warn(`[CoderAgentExecutor] Task ${taskId} execution aborted.`);\n                currentTask.cancelPendingTools(\"Execution aborted\");\n            }";
+const PATCHED = "function isHeadlessMode(options) { return false;\n  return options?.headless ?? false;\n}\nconst currentTask = wrapper.task; const _requestedModel = x;\n} else if (outcomeString === 'proceed_always_and_save') {\n  return true;\n} else if (outcomeString === 'inject_result') {\n  // PATCH: inject_result support (pi-gemini-cli-provider)\n  return true;\n}\n        if (!abortController.signal.aborted) {\n          if (typeof currentTask !== \"undefined\" && currentTask && currentTask.taskState === \"input-required\") {\n            logger.info(\"[CoderAgentExecutor] Socket closed while task \" + taskId + \" awaits input. Preserving pending tools.\");\n          }\n          else {\n            abortController.abort();\n          }\n        }\n      /* PATCH5: final=false keeps SSE open, notifier removed keeps loop alive */\nif (abortSignal.aborted) {\n                logger.warn(`[CoderAgentExecutor] Task ${taskId} execution aborted.`);\n                currentTask.cancelPendingTools(\"Execution aborted\");\n            }";
 
 vi.mock('./availability.js', () => ({
   checkA2AInstalled: vi.fn(),
   checkA2APatched: vi.fn(),
   checkA2AInjectResultPatched: vi.fn(),
   checkA2APendingToolAbortPatched: vi.fn(),
+  checkA2AToolCompletionNotifierPatched: vi.fn(),
 }));
 vi.mock('./a2a-path.js', () => ({
   getA2APath: vi.fn(),
@@ -72,14 +73,16 @@ describe('a2a-installer', () => {
       vi.mocked(checkA2APatched).mockReturnValue(true);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(true);
       vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
+      vi.mocked(checkA2AToolCompletionNotifierPatched).mockReturnValue(true);
       vi.mocked(checkA2APatched).mockReturnValue(true);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(true);
       vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
+      vi.mocked(checkA2AToolCompletionNotifierPatched).mockReturnValue(true);
       vi.mocked(readFileSync).mockReturnValue(PATCHED);
 
       const result = await installA2AServer(ctx);
       expect(result).toBe(true);
-      expect(ctx.ui.notify).toHaveBeenCalledWith('A2A already installed and patched with all 4 patches');
+      expect(ctx.ui.notify).toHaveBeenCalledWith('A2A already installed and patched with all 5 patches');
     });
 
     it('returns true when patches missing', async () => {
@@ -205,7 +208,7 @@ describe('a2a-installer', () => {
       vi.mocked(checkA2AInstalled).mockReturnValue(false);
     };
 
-    it('applies all 4 patches', async () => {
+    it('applies all 5 patches', async () => {
       setup();
       vi.mocked(ctx.ui.confirm).mockResolvedValue(true);
       vi.mocked(execSync).mockImplementation((c: any) => c.toString().includes('npm') ? '' : '/usr/bin/gemini');
@@ -252,9 +255,10 @@ describe('a2a-installer', () => {
       vi.mocked(checkA2APatched).mockReturnValue(true);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(true);
       vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
+      vi.mocked(checkA2AToolCompletionNotifierPatched).mockReturnValue(true);
       vi.mocked(readFileSync).mockReturnValue(PATCHED);
       await installA2AServer(ctx);
-      expect(ctx.ui.notify).toHaveBeenCalledWith('A2A already installed and patched with all 4 patches');
+      expect(ctx.ui.notify).toHaveBeenCalledWith('A2A already installed and patched with all 5 patches');
     });
   });
 

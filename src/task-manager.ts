@@ -6,6 +6,7 @@
  */
 
 import type { TaskState, ParsedA2AEvent, ToolCallMetadata } from './types.js';
+import { errorLog } from './logger.js';
 
 // ============================================================================
 // State
@@ -118,12 +119,10 @@ export function updateTaskState(taskId: string, event: ParsedA2AEvent): TaskStat
     }
   }
   
-  // Update awaiting approval from input-required + final pattern
-  // Only set awaitingApproval when there are actual pending tool calls.
-  // input-required + final is ALSO the normal completion state (no tools),
-  // so we must check pendingToolCalls to distinguish.
-  if (state.state === 'input-required' && event.result.final === true) {
+  // Update awaiting approval from input-required state.
+  if (state.state === 'input-required') {
     state.awaitingApproval = state.pendingToolCalls.length > 0;
+    errorLog('task-mgr', `input-required check: pending=${state.pendingToolCalls.length} awaitingApproval=${state.awaitingApproval}`);
   }
   
   taskStore.set(taskId, state);
@@ -137,9 +136,9 @@ export function updateTaskState(taskId: string, event: ParsedA2AEvent): TaskStat
  * @param toolCall - Tool call metadata to add/update
  */
 function updatePendingToolCall(state: TaskState, toolCall: ToolCallMetadata): void {
+  errorLog('task-mgr', `updatePendingToolCall: callId=${toolCall.callId} name=${toolCall.name} status=${toolCall.status} cleared=${state.clearedCallIds?.has(toolCall.callId)}`);
+
   // Reject replayed events for calls that were already cleared.
-  // Resubscribe snapshots replay old tool-call-update events that can
-  // re-add cleared tools, causing stale awaitingApproval state.
   if (state.clearedCallIds?.has(toolCall.callId)) {
     return;
   }
@@ -153,6 +152,7 @@ function updatePendingToolCall(state: TaskState, toolCall: ToolCallMetadata): vo
   } else {
     state.pendingToolCalls.push(toolCall);
   }
+  errorLog('task-mgr', `pendingToolCalls now: ${state.pendingToolCalls.length} [${state.pendingToolCalls.map(t => t.name).join(',')}]`);
 }
 
 /**

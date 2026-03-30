@@ -14,7 +14,7 @@ import {
   stopServer,
   __testing__,
 } from './a2a-lifecycle.js';
-import { checkA2AInjectResultPatched, checkA2APendingToolAbortPatched } from './availability.js';
+import { checkA2AInjectResultPatched, checkA2APendingToolAbortPatched, checkA2AToolCompletionNotifierPatched } from './availability.js';
 import { getA2APackageRoot } from './a2a-path.js';
 import { isPortInUse, isServerHealthy } from './port-check.js';
 
@@ -23,6 +23,7 @@ vi.mock('./availability.js', () => ({
   checkA2APatched: vi.fn(),
   checkA2AInjectResultPatched: vi.fn(),
   checkA2APendingToolAbortPatched: vi.fn(),
+  checkA2AToolCompletionNotifierPatched: vi.fn(),
 }));
 
 vi.mock('./a2a-path.js', () => ({
@@ -38,6 +39,11 @@ vi.mock('node:child_process', () => ({
   spawn: vi.fn(),
   exec: vi.fn(),
 }));
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, openSync: vi.fn() };
+});
 
 describe('a2a-lifecycle inject_result patch verification', () => {
   const mockPackageRoot = '/mock/a2a';
@@ -90,6 +96,7 @@ describe('a2a-lifecycle inject_result patch verification', () => {
       // Mock inject_result patch as missing
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(false);
       vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
+      vi.mocked(checkA2AToolCompletionNotifierPatched).mockReturnValue(true);
       
       // Attempt to start server - should throw
       await expect(startServer()).rejects.toThrowError('inject_result patch not found in A2A bundle');
@@ -125,52 +132,47 @@ describe('a2a-lifecycle inject_result patch verification', () => {
     });
 
     it('proceeds with startup when all required patches are present', async () => {
-      // Mock port check to indicate no existing server
+      // Mock port check to indicate no existing server initially, then healthy after spawn
       vi.mocked(isPortInUse).mockResolvedValue(false);
-      vi.mocked(isServerHealthy).mockResolvedValue(false);
-      
+      vi.mocked(isServerHealthy)
+        .mockResolvedValueOnce(false)   // pre-spawn check
+        .mockResolvedValueOnce(true);   // first poll succeeds
+
       // Mock package root
       vi.mocked(getA2APackageRoot).mockReturnValue(mockPackageRoot);
-      
+
       // Mock all required patches as present
       const { checkA2APatched } = await import('./availability.js');
       vi.mocked(checkA2APatched).mockReturnValue(true);
       vi.mocked(checkA2AInjectResultPatched).mockReturnValue(true);
       vi.mocked(checkA2APendingToolAbortPatched).mockReturnValue(true);
-      
+      vi.mocked(checkA2AToolCompletionNotifierPatched).mockReturnValue(true);
+
+      // Mock openSync to return a fake fd
+      const { openSync } = await import('node:fs');
+      vi.mocked(openSync).mockReturnValue(99);
+
       // Mock spawn to create a fake child process
-      const mockStdout = {
-        on: vi.fn(),
-      };
-      
       const mockChildProcess = {
-        stdout: mockStdout,
-        stderr: { on: vi.fn() },
         on: vi.fn(),
         kill: vi.fn(),
+        unref: vi.fn(),
         pid: 12345,
       } as unknown as ChildProcess;
-      
+
       const { spawn } = await import('node:child_process');
       vi.mocked(spawn).mockReturnValue(mockChildProcess);
-      
-      // Simulate ready marker being emitted
-      setTimeout(() => {
-        const dataCall = mockStdout.on.mock.calls.find((call) => call[0] === 'data');
-        if (dataCall && dataCall[1]) {
-          dataCall[1](Buffer.from('Agent Server started\n'));
-        }
-      }, 10);
-      
+
       // Should resolve without throwing
       await expect(startServer()).resolves.toBeUndefined();
-      
-      // Verify spawn was called
+
+      // Verify spawn was called with file descriptors (detached, no pipes)
       expect(spawn).toHaveBeenCalledWith(
         'node',
         [mockServerPath],
         expect.objectContaining({
-          stdio: ['ignore', 'pipe', 'pipe'],
+          stdio: ['ignore', 99, 99],
+          detached: true,
         })
       );
     });

@@ -27,6 +27,12 @@ Google's Gemini CLI includes an A2A server that exposes Gemini models over HTTP 
 ## Installation
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/skdev-ai/pi-gemini-cli-provider/main/install.sh | bash
+```
+
+Or manually:
+
+```bash
 cd ~/.pi/agent/extensions
 git clone https://github.com/skdev-ai/pi-gemini-cli-provider.git
 cd pi-gemini-cli-provider

@@ -32,7 +32,9 @@
   "files": [
     "src/**/*.ts",
     "!src/**/*.test.ts",
-    "README.md"
+    "install.sh",
+    "README.md",
+    "ARCHITECTURE.md"
   ],
   "scripts": {
     "build": "tsc",

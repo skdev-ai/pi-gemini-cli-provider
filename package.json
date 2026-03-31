@@ -1,6 +1,6 @@
 {
   "name": "@skdev-ai/pi-gemini-cli-provider",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Gemini LLM provider for Pi/GSD via A2A protocol with MCP tool bridge",
   "type": "module",
   "main": "src/index.ts",
@@ -45,7 +45,6 @@
     "@sinclair/typebox": "^0.34.41"
   },
   "dependencies": {
-    "axios": "^1.13.6",
     "eventsource-parser": "3.0.6"
   },
   "devDependencies": {
